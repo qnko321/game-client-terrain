@@ -1,0 +1,27 @@
+[package]
+name = "Learning"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+actix-web = "^4"
+uuid = { version = "^0.8", features = ["v4"] }
+serde = { version = "^1", features = ["derive"] }
+aws-config = "^0.8"
+aws-sdk-dynamodb = "^0.8"
+env_logger = "0.8"
+log = "^0.4"
+strum_macros = "^0.24"
+strum = { version = "^0.24", features = ["derive"] }
+derive_more = "^0.99"
+anyhow = "1"
+lazy_static = "1"
+nalgebra-glm = "0.17"
+png = "0.17"
+pretty_env_logger = "0.4"
+thiserror = "1"
+tobj = { version = "3", features = ["log"] }
+vulkanalia = { version = "=0.16.0", features = ["libloading", "window"] }
+winit = "0.27"
