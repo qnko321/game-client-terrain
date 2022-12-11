@@ -97,23 +97,13 @@ fn main() -> Result<()> {
     // App
 
     let mut app = unsafe { App::create(&window)? };
-    let mut game_objects = Vec::<Box<dyn GameObject>>::new();
-
-    let mut player = PlayerData::create();
-    let boxed_player = Box::new(player);
-    game_objects.push(boxed_player);
-
-    let obj = Model::create();
-    let boxed = Box::new(obj);
-    game_objects.push(boxed);
-
     let mut destroying = false;
     let mut minimized = false;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
             // Render a frame if our Vulkan app is not being destroyed.
-            Event::MainEventsCleared if !destroying && !minimized => unsafe { app.render(&window, &mut game_objects) }.unwrap(),
+            Event::MainEventsCleared if !destroying && !minimized => unsafe { app.render(&window) }.unwrap(),
             // Mark the window as having been resized.
             Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
                 if size.width == 0 || size.height == 0 {
@@ -161,6 +151,7 @@ struct App {
     last_frame_time: Instant,
     is_first_frame: bool,
     frame_count: u128,
+    player_data: PlayerData,
 }
 
 impl App {
@@ -200,12 +191,12 @@ impl App {
         create_command_buffers(&device, &mut data, &transform.get_model_matrix())?; // TODO: FIx
         create_sync_objects(&device, &mut data)?;
 
-        /*let mut player_data = PlayerData::default();
+        let mut player_data = PlayerData::default();
         player_data.horizontal_angle = 1.57;
-        player_data.position = glm::Vec3::new(4.0, 0.0, 0.0);
+        player_data.transform.position = glm::Vec3::new(4.0, 0.0, 0.0);
         player_data.vertical_angle = 3.14;
         player_data.mouse_speed = 2.0;
-        player_data.move_speed = 1.0;*/
+        player_data.move_speed = 1.0;
 
         Ok(Self {
             entry,
@@ -221,11 +212,12 @@ impl App {
             is_focused: true,
             is_first_frame: true,
             frame_count: 0,
+            player_data
         })
     }
 
     /// Renders a frame for our Vulkan app.
-    unsafe fn render(&mut self, window: &Window, game_objects: &mut Vec<Box<dyn GameObject>>) -> Result<()> {
+    unsafe fn render(&mut self, window: &Window) -> Result<()> {
         let in_flight_fence = self.data.in_flight_fences[self.frame];
 
         self.device
@@ -305,14 +297,14 @@ impl App {
                 let x_offset = -x_offset;
                 let y_offset = -y_offset;
 
-                /*self.player_data.horizontal_angle += self.delta_time
+                self.player_data.horizontal_angle += self.delta_time
                     * self.player_data.mouse_speed
                     * x_offset as f32;
                 self.player_data.vertical_angle += (current_frame_time - self.last_frame_time).as_secs_f32()
                     * self.player_data.mouse_speed
                     * y_offset as f32;
 
-                self.player_data.vertical_angle = glm::clamp_scalar(self.player_data.vertical_angle, 0.0, 6.28);*/
+                self.player_data.vertical_angle = glm::clamp_scalar(self.player_data.vertical_angle, 0.0, 6.28);
             } else {
                 self.is_first_frame = false;
             }
@@ -325,7 +317,24 @@ impl App {
             Enigo.mouse_move_to(center_of_window_x, center_of_window_y);
         }
 
-
+        if self.input_manager.get_key(VirtualKeyCode::W) {
+            let mut forward = self.player_data.forward();
+            forward.z = 0.0;
+            self.player_data.walk(forward, self.delta_time);
+        }
+        if self.input_manager.get_key(VirtualKeyCode::S) {
+            let mut backward = -self.player_data.forward();
+            backward.z = 0.0;
+            self.player_data.walk(backward, self.delta_time);
+        }
+        if self.input_manager.get_key(VirtualKeyCode::D) {
+            let mut right = self.player_data.right();
+            self.player_data.walk(right, self.delta_time);
+        }
+        if self.input_manager.get_key(VirtualKeyCode::A) {
+            let mut left = -self.player_data.right();
+            self.player_data.walk(left, self.delta_time);
+        }
 
         if self.input_manager.get_key_down(VirtualKeyCode::F11) {
             if window.fullscreen().is_some() {
@@ -349,9 +358,7 @@ impl App {
             info!("Created a model");
         }
 
-        for mut go in game_objects.iter() {
-            go.update(&mut self);
-        }
+        self.input_manager.detect_new_frame();
 
         self.last_frame_time = current_frame_time;
 
@@ -381,12 +388,12 @@ impl App {
         let up = glm::cross(&right, &look_direction);
 
         let center = glm::vec3(
-            self.player_data.position.x + look_direction.x as f32,
-            self.player_data.position.y + look_direction.y as f32,
-            self.player_data.position.z + look_direction.z as f32,
+            self.player_data.transform.position.x + look_direction.x as f32,
+            self.player_data.transform.position.y + look_direction.y as f32,
+            self.player_data.transform.position.z + look_direction.z as f32,
         );
 
-        let view = glm::look_at(&self.player_data.position, &center, &up);
+        let view = glm::look_at(&self.player_data.transform.position, &center, &up);
 
         let mut proj = glm::perspective_rh_zo(
             self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,

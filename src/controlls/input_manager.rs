@@ -49,7 +49,13 @@ impl InputManager {
                 self.released_current_frame.push(key_code);
             }
         }
+
         Ok(())
+    }
+
+    pub(crate) fn detect_new_frame(&mut self) {
+        self.pressed_current_frame.clear();
+        self.released_current_frame.clear();
     }
 
     pub(crate) fn get_key_down(&mut self, key_code: VirtualKeyCode) -> bool {

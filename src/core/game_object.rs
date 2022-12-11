@@ -4,7 +4,7 @@ use nalgebra_glm as glm;
 use crate::App;
 use crate::core::transform::Transform;
 
-pub trait GameObject {
+pub(crate) trait GameObject {
     /// Instantiates the game object
     fn create() -> Self where Self: Sized;
 
