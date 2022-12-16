@@ -4,12 +4,12 @@
     clippy::too_many_arguments,
     clippy::unnecessary_wraps
 )]
-
+//
 mod graphics;
 mod player;
 mod controlls;
 mod core;
-
+//
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -21,21 +21,21 @@ use std::mem::size_of;
 use std::os::raw::c_void;
 use std::ptr::{copy_nonoverlapping as memcpy, null};
 use std::time::Instant;
-
+//
 use anyhow::{anyhow, Result};
 use log::*;
 use nalgebra_glm as glm;
 use nalgebra_glm::{clamp, cos, is_null, sin, TVec3};
 use thiserror::Error;
-
+//
 use winit::dpi::{LogicalPosition, LogicalSize, Position};
 use winit::event::{ElementState, Event, ScanCode, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{CursorIcon, Fullscreen, Window, WindowBuilder};
-
+//
 use crate::graphics::buffers::{create_index_buffer, create_uniform_buffers, create_vertex_buffer};
 use crate::graphics::command_buffers::create_command_buffers;
-use crate::graphics::command_pool::create_command_pool;
+use crate::graphics::command_pool::create_command_pools;
 use crate::graphics::depth_objects::create_depth_objects;
 use crate::graphics::descriptors::{create_descriptor_pool, create_descriptor_sets};
 use crate::graphics::framebuffers::create_framebuffers;
@@ -70,16 +70,16 @@ use crate::core::game_object;
 use crate::core::game_object::GameObject;
 use crate::core::model::Model;
 
-/// Whether the validation layers should be enabled.
+//Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
-/// The name of the validation layers.
+//The name of the validation layers.
 const VALIDATION_LAYER: vk::ExtensionName =
     vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
 
-/// The required device extensions.
+//The required device extensions.
 const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.name];
 
-/// The maximum number of frames that can be processed concurrently.
+//The maximum number of frames that can be processed concurrently.
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 #[rustfmt::skip]
@@ -87,7 +87,6 @@ fn main() -> Result<()> {
     pretty_env_logger::init();
 
     // Window
-
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("Kub4e")
@@ -134,7 +133,7 @@ fn main() -> Result<()> {
     });
 }
 
-/// Our Vulkan app.
+// Our Vulkan app.
 #[derive(Clone, Debug)]
 struct App {
     entry: Entry,
@@ -153,9 +152,9 @@ struct App {
     frame_count: u128,
     player_data: PlayerData,
 }
-
+//
 impl App {
-    /// Creates our Vulkan app.
+    // Creates our Vulkan app.
     unsafe fn create(window: &Window) -> Result<Self> {
         let loader = LibloadingLoader::new(LIBRARY)?;
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
@@ -169,7 +168,7 @@ impl App {
         create_render_pass(&instance, &device, &mut data)?;
         create_descriptor_set_layout(&device, &mut data)?;
         create_pipeline(&device, &mut data)?;
-        create_command_pool(&instance, &device, &mut data)?;
+        create_command_pools(&instance, &device, &mut data)?;
         create_depth_objects(&instance, &device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
         create_texture_image(&instance, &device, &mut data)?;
@@ -188,7 +187,7 @@ impl App {
             scale: glm::Vec3::new(1.0, 1.0, 1.0),
         };
 
-        create_command_buffers(&device, &mut data, &transform.get_model_matrix())?; // TODO: FIx
+        create_command_buffers(&device, &mut data, &transform.get_model_matrix())?; //TODO: FIx
         create_sync_objects(&device, &mut data)?;
 
         let mut player_data = PlayerData::default();
@@ -216,7 +215,7 @@ impl App {
         })
     }
 
-    /// Renders a frame for our Vulkan app.
+    // Renders a frame for our Vulkan app.
     unsafe fn render(&mut self, window: &Window) -> Result<()> {
         let in_flight_fence = self.data.in_flight_fences[self.frame];
 
@@ -369,15 +368,10 @@ impl App {
     }
 
     unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
-        let previous = self.data.command_buffers[image_index];
-        self.device.free_command_buffers(self.data.command_pool, &[previous]);
+        let command_pool = self.data.command_pools[image_index];
+        self.device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
 
-        let allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(self.data.command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-
-        let command_buffer = self.device.allocate_command_buffers(&allocate_info)?[0];
+        let command_buffer = self.data.command_buffers[image_index];
         self.data.command_buffers[image_index] = command_buffer;
 
         let transform = Transform{
@@ -385,40 +379,40 @@ impl App {
             rotation: glm::Vec3::new(0.0, 0.0, 0.0),
             scale: glm::Vec3::new(1.0, 1.0, 1.0),
         };
-
+//
         let model = transform.get_model_matrix();
-
+//
         let (_, model_bytes, _) = model.as_slice().align_to::<u8>();
-
+//
         let info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
+//
         self.device.begin_command_buffer(command_buffer, &info)?;
-
+//
         let render_area = vk::Rect2D::builder()
             .offset(vk::Offset2D::default())
             .extent(self.data.swapchain_extent);
-
+//
         let color_clear_value = vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: [0.0, 0.0, 0.0, 1.0],
             },
         };
-
+//
         let depth_clear_value = vk::ClearValue {
             depth_stencil: vk::ClearDepthStencilValue {
                 depth: 1.0,
                 stencil: 0,
             },
         };
-
+//
         let clear_values = &[color_clear_value, depth_clear_value];
         let info = vk::RenderPassBeginInfo::builder()
             .render_pass(self.data.render_pass)
             .framebuffer(self.data.framebuffers[image_index])
             .render_area(render_area)
             .clear_values(clear_values);
-
+//
         self.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::INLINE);
         self.device.cmd_bind_pipeline(
             command_buffer,
@@ -457,7 +451,7 @@ impl App {
         Ok(())
     }
 
-    /// Updates the uniform buffer object for our Vulkan app.
+    //Updates the uniform buffer object for our Vulkan app.
     unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
         // MVP
 
@@ -537,13 +531,13 @@ impl App {
         Ok(())
     }
 
-    /// Destroys our Vulkan app.
+        //Destroys our Vulkan app.
     #[rustfmt::skip]
     unsafe fn destroy(&mut self) {
         self.device.device_wait_idle().unwrap();
 
         self.destroy_swapchain();
-
+        self.data.command_pools.iter().for_each(|p| self.device.destroy_command_pool(*p, None));
         self.data.in_flight_fences.iter().for_each(|f| self.device.destroy_fence(*f, None));
         self.data.render_finished_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
         self.data.image_available_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
@@ -567,13 +561,12 @@ impl App {
         self.instance.destroy_instance(None);
     }
 
-    /// Destroys the parts of our Vulkan app related to the swapchain.
+    //Destroys the parts of our Vulkan app related to the swapchain.
     #[rustfmt::skip]
     unsafe fn destroy_swapchain(&mut self) {
         self.device.destroy_image_view(self.data.depth_image_view, None);
         self.device.free_memory(self.data.depth_image_memory, None);
         self.device.destroy_image(self.data.depth_image, None);
-        self.device.free_command_buffers(self.data.command_pool, &self.data.command_buffers);
         self.device.destroy_descriptor_pool(self.data.descriptor_pool, None);
         self.data.uniform_buffers_memory.iter().for_each(|m| self.device.free_memory(*m, None));
         self.data.uniform_buffers.iter().for_each(|b| self.device.destroy_buffer(*b, None));
@@ -584,14 +577,14 @@ impl App {
         self.data.swapchain_image_views.iter().for_each(|v| self.device.destroy_image_view(*v, None));
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
     }
-
+//
     fn set_focused(&mut self, focused: bool) {
         self.is_focused = focused;
         self.is_first_frame = true;
     }
 }
-
-/// The Vulkan handles and associated properties used by our Vulkan app.
+//
+// The Vulkan handles and associated properties used by our Vulkan app.
 #[derive(Clone, Debug, Default)]
 struct AppData {
     // Debug
@@ -635,7 +628,8 @@ struct AppData {
     // Descriptors
     descriptor_pool: vk::DescriptorPool,
     descriptor_sets: Vec<vk::DescriptorSet>,
-    // Command Buffers
+    // Commands
+    command_pools: Vec<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
     // Sync Objects
     image_available_semaphores: Vec<vk::Semaphore>,

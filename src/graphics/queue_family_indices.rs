@@ -22,7 +22,7 @@ use winit::window::{Window, WindowBuilder};
 
 use crate::graphics::buffers::{create_index_buffer, create_uniform_buffers, create_vertex_buffer};
 use crate::graphics::command_buffers::create_command_buffers;
-use crate::graphics::command_pool::create_command_pool;
+use crate::graphics::command_pool::create_command_pools;
 use crate::graphics::depth_objects::create_depth_objects;
 use crate::graphics::descriptors::{create_descriptor_pool, create_descriptor_sets};
 use crate::graphics::framebuffers::create_framebuffers;
