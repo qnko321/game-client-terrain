@@ -1,7 +1,7 @@
-use log::info;
+
 use nalgebra_glm as glm;
 use winit::event::VirtualKeyCode;
-use crate::{App, AppData};
+use crate::{App};
 use crate::core::game_object::GameObject;
 use crate::core::transform::Transform;
 

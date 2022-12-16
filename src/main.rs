@@ -10,28 +10,28 @@ mod player;
 mod controlls;
 mod core;
 //
-use std::borrow::Borrow;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::ffi::CStr;
-use std::fs::File;
-use std::hash::{Hash, Hasher};
-use std::io::BufReader;
+
+
+
+
+
+
+
 use std::mem::size_of;
-use std::os::raw::c_void;
-use std::ptr::{copy_nonoverlapping as memcpy, null};
+
+use std::ptr::{copy_nonoverlapping as memcpy};
 use std::time::Instant;
 //
 use anyhow::{anyhow, Result};
 use log::*;
 use nalgebra_glm as glm;
-use nalgebra_glm::{clamp, cos, is_null, sin, TVec3};
-use thiserror::Error;
+
+
 //
-use winit::dpi::{LogicalPosition, LogicalSize, Position};
-use winit::event::{ElementState, Event, ScanCode, VirtualKeyCode, WindowEvent};
+use winit::dpi::{LogicalSize};
+use winit::event::{Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
-use winit::window::{CursorIcon, Fullscreen, Window, WindowBuilder};
+use winit::window::{Fullscreen, Window, WindowBuilder};
 //
 use crate::graphics::buffers::{create_index_buffer, create_uniform_buffers, create_vertex_buffer};
 use crate::graphics::command_buffers::create_command_buffers;
@@ -42,7 +42,7 @@ use crate::graphics::framebuffers::create_framebuffers;
 use crate::graphics::instance::create_instance;
 use crate::graphics::logical_device::create_logical_device;
 use crate::graphics::models::load_model;
-use crate::graphics::physical_device::SuitabilityError;
+
 use crate::graphics::pipeline::{
     create_descriptor_set_layout, create_pipeline, create_render_pass,
 };
@@ -60,15 +60,15 @@ use vulkanalia::vk::ExtDebugUtilsExtension;
 use vulkanalia::vk::KhrSurfaceExtension;
 use vulkanalia::vk::KhrSwapchainExtension;
 use vulkanalia::window as vk_window;
-use winit::monitor::VideoMode;
-use crate::controlls::input_manager;
+
+
 use crate::controlls::input_manager::InputManager;
 use crate::core::transform::Transform;
-use crate::core::trigonometry_shared::FastConversions;
+
 use crate::player::player_data::PlayerData;
-use crate::core::game_object;
+
 use crate::core::game_object::GameObject;
-use crate::core::model::Model;
+
 
 //Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
@@ -328,11 +328,11 @@ impl App {
             self.player_data.walk(backward, self.delta_time);
         }
         if self.input_manager.get_key(VirtualKeyCode::D) {
-            let mut right = self.player_data.right();
+            let right = self.player_data.right();
             self.player_data.walk(right, self.delta_time);
         }
         if self.input_manager.get_key(VirtualKeyCode::A) {
-            let mut left = -self.player_data.right();
+            let left = -self.player_data.right();
             self.player_data.walk(left, self.delta_time);
         }
 

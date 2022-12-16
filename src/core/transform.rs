@@ -1,5 +1,5 @@
 use nalgebra_glm as glm;
-use nalgebra_glm::quat;
+
 use crate::core::matrix_functions::*;
 use crate::core::trigonometry_shared::FastConversions;
 

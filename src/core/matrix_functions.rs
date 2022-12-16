@@ -22,7 +22,7 @@ pub(crate) fn rotate_y(a: f32) -> glm::Mat4 {
     glm::Mat4::new(
         a.cos(), 0.0, a.sin(), 0.0,
             0.0, 1.0,        0.0, 0.0,
-        (-a.sin()), 0.0,    a.cos(), 0.0,
+        -a.sin(), 0.0,    a.cos(), 0.0,
             0.0, 0.0,        0.0, 1.0,
     )
 }

@@ -1,8 +1,8 @@
-use std::borrow::Borrow;
-use log::info;
-use nalgebra_glm as glm;
+
+
+
 use crate::App;
-use crate::core::transform::Transform;
+
 
 pub(crate) trait GameObject {
     /// Instantiates the game object

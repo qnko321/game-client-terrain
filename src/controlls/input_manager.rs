@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use log::{error, info};
+
 use winit::event::{DeviceId, ElementState, KeyboardInput, VirtualKeyCode};
 use anyhow::{anyhow, Result};
-use crate::App;
+
 
 #[derive(Clone, Debug)]
 pub(crate) struct InputManager {
