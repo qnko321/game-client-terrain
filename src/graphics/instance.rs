@@ -1,30 +1,19 @@
-
+use std::sync::Mutex;
 use std::collections::HashSet;
 use std::ffi::CStr;
-
-
-
-
+use std::fmt::Debug;
+use std::fs::{File, OpenOptions, read};
+use std::io::{Read, Seek, Write};
 use std::os::raw::c_void;
-
-
-
+use std::path::Path;
+use std::time::Instant;
 use anyhow::{anyhow, Result};
+use chrono::Utc;
+use lazy_static::lazy_static;
 use log::*;
-
-
-
-
-
-
-
 use winit::window::{Window};
-
-
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::ExtDebugUtilsExtension;
-
-
 use vulkanalia::window as vk_window;
 
 use crate::{AppData, VALIDATION_ENABLED, VALIDATION_LAYER};
@@ -108,14 +97,16 @@ extern "system" fn debug_callback(
     let data = unsafe { *data };
     let message = unsafe { CStr::from_ptr(data.message) }.to_string_lossy();
 
+    let log = format!("\n[{}] ({:?}) {}", Utc::now().to_string(), type_, message);
+
     if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::ERROR {
-        error!("({:?}) {}", type_, message);
+        error!("{}", log);
     } else if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::WARNING {
-        warn!("({:?}) {}", type_, message);
+        warn!("{}", log);
     } else if severity >= vk::DebugUtilsMessageSeverityFlagsEXT::INFO {
-        debug!("({:?}) {}", type_, message);
+        debug!("{}", log);
     } else {
-        trace!("({:?}) {}", type_, message);
+        trace!("{}", log);
     }
 
     vk::FALSE

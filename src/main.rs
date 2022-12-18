@@ -1,38 +1,35 @@
+//#![windows_subsystem = "windows"]
+
 #![allow(
     dead_code,
     unused_variables,
     clippy::too_many_arguments,
     clippy::unnecessary_wraps
 )]
-//
+
 mod graphics;
 mod player;
 mod controlls;
 mod core;
-//
 
-
-
-
-
-
-
+use std::io::prelude::*;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::mem::size_of;
+use std::path::Path;
 
 use std::ptr::{copy_nonoverlapping as memcpy};
 use std::time::Instant;
-//
+
 use anyhow::{anyhow, Result};
 use log::*;
 use nalgebra_glm as glm;
 
-
-//
 use winit::dpi::{LogicalSize};
 use winit::event::{Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowBuilder};
-//
+
 use crate::graphics::buffers::{create_index_buffer, create_uniform_buffers, create_vertex_buffer};
 use crate::graphics::command_buffers::create_command_buffers;
 use crate::graphics::command_pool::create_command_pools;
@@ -61,14 +58,12 @@ use vulkanalia::vk::KhrSurfaceExtension;
 use vulkanalia::vk::KhrSwapchainExtension;
 use vulkanalia::window as vk_window;
 
-
 use crate::controlls::input_manager::InputManager;
 use crate::core::transform::Transform;
 
 use crate::player::player_data::PlayerData;
 
 use crate::core::game_object::GameObject;
-
 
 //Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
@@ -84,6 +79,9 @@ const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 #[rustfmt::skip]
 fn main() -> Result<()> {
+    let path = Path::new("log.txt");
+    File::create(path).expect("Unable to create log.txt file!");
+
     pretty_env_logger::init();
 
     // Window
@@ -615,7 +613,6 @@ impl App {
         if VALIDATION_ENABLED {
             self.instance.destroy_debug_utils_messenger_ext(self.data.messenger, None);
         }
-
         self.instance.destroy_instance(None);
     }
 
@@ -635,13 +632,13 @@ impl App {
         self.data.swapchain_image_views.iter().for_each(|v| self.device.destroy_image_view(*v, None));
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
     }
-//
+
     fn set_focused(&mut self, focused: bool) {
         self.is_focused = focused;
         self.is_first_frame = true;
     }
 }
-//
+
 // The Vulkan handles and associated properties used by our Vulkan app.
 #[derive(Clone, Debug, Default)]
 struct AppData {
