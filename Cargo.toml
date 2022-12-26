@@ -27,3 +27,6 @@ vulkanalia = { version = "=0.16.0", features = ["libloading", "window"] }
 winit = "0.27"
 enigo = "0.0.14"
 chrono = "0.4.23"
+noise = "0.8.2"
+rand = "0.8.5"
+glob = "0.3.0"

@@ -11,6 +11,7 @@ mod graphics;
 mod player;
 mod controlls;
 mod core;
+mod terrain;
 
 use std::io::prelude::*;
 use std::fs::{File, OpenOptions};
@@ -30,6 +31,14 @@ use winit::event::{Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowBuilder};
 
+use enigo::*;
+use vulkanalia::loader::{LibloadingLoader, LIBRARY};
+use vulkanalia::prelude::v1_0::*;
+use vulkanalia::vk::ExtDebugUtilsExtension;
+use vulkanalia::vk::KhrSurfaceExtension;
+use vulkanalia::vk::KhrSwapchainExtension;
+use vulkanalia::window as vk_window;
+
 use crate::graphics::buffers::{create_index_buffer, create_uniform_buffers, create_vertex_buffer};
 use crate::graphics::command_buffers::create_command_buffers;
 use crate::graphics::command_pool::create_command_pools;
@@ -39,34 +48,22 @@ use crate::graphics::framebuffers::create_framebuffers;
 use crate::graphics::instance::create_instance;
 use crate::graphics::logical_device::create_logical_device;
 use crate::graphics::models::load_model;
-
 use crate::graphics::pipeline::{
     create_descriptor_set_layout, create_pipeline, create_render_pass,
 };
 use crate::graphics::swapchain::{create_swapchain, create_swapchain_image_views};
 use crate::graphics::sync_objects::create_sync_objects;
-use crate::graphics::textures::{
-    create_texture_image, create_texture_image_view, create_texture_sampler,
-};
+use crate::graphics::textures::{create_texture_image_view, create_texture_image, create_texture_sampler};
 use crate::graphics::uniform_buffer_object::UniformBufferObject;
 use crate::graphics::vertex::Vertex;
-use enigo::*;
-use vulkanalia::loader::{LibloadingLoader, LIBRARY};
-use vulkanalia::prelude::v1_0::*;
-use vulkanalia::vk::ExtDebugUtilsExtension;
-use vulkanalia::vk::KhrSurfaceExtension;
-use vulkanalia::vk::KhrSwapchainExtension;
-use vulkanalia::window as vk_window;
-
 use crate::controlls::input_manager::InputManager;
 use crate::core::transform::Transform;
-
 use crate::player::player_data::PlayerData;
-
 use crate::core::game_object::GameObject;
+use crate::terrain::world::generate_world;
 
 //Whether the validation layers should be enabled.
-const VALIDATION_ENABLED: bool = cfg!(debug_assertions);
+const VALIDATION_ENABLED: bool = false; //cfg!(debug_assertions)
 //The name of the validation layers.
 const VALIDATION_LAYER: vk::ExtensionName =
     vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
@@ -145,14 +142,14 @@ struct App {
     input_manager: InputManager,
     // Delta Time
     delta_time: f32,
-    last_frame_time: Instant,
+    last_frame_time: f64,
     is_first_frame: bool,
     frame_count: u128,
     player_data: PlayerData,
 }
-//
+
 impl App {
-    // Creates our Vulkan app.
+    #[rustfmt::skip]
     unsafe fn create(window: &Window) -> Result<Self> {
         let loader = LibloadingLoader::new(LIBRARY)?;
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
@@ -169,23 +166,17 @@ impl App {
         create_command_pools(&instance, &device, &mut data)?;
         create_depth_objects(&instance, &device, &mut data)?;
         create_framebuffers(&device, &mut data)?;
-        create_texture_image(&instance, &device, &mut data)?;
+        create_texture_image(&instance, &device, &mut data, "resources/blocks.png")?;
         create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
-        load_model(&mut data)?;
+        //load_model(&mut data, "resources/viking_room.obj")?;
+        generate_world(&mut data);
         create_vertex_buffer(&instance, &device, &mut data)?;
         create_index_buffer(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
         create_descriptor_pool(&device, &mut data)?;
         create_descriptor_sets(&device, &mut data)?;
-
-        let transform = Transform{
-            position: glm::Vec3::new(-2.0, 0.0, 0.0),
-            rotation: glm::Vec3::new(0.0, 0.0, 0.0),
-            scale: glm::Vec3::new(1.0, 1.0, 1.0),
-        };
-
-        create_command_buffers(&device, &mut data, &transform.get_model_matrix())?; //TODO: FIx
+        create_command_buffers(&device, &mut data)?; //TODO: FIx
         create_sync_objects(&device, &mut data)?;
 
         let mut player_data = PlayerData::default();
@@ -193,7 +184,7 @@ impl App {
         player_data.transform.position = glm::Vec3::new(4.0, 0.0, 0.0);
         player_data.vertical_angle = 3.14;
         player_data.mouse_speed = 2.0;
-        player_data.move_speed = 1.0;
+        player_data.move_speed = 5.0;
 
         Ok(Self {
             entry,
@@ -204,7 +195,7 @@ impl App {
             frame: 0,
             resized: false,
             start: Instant::now(),
-            last_frame_time: Instant::now(),
+            last_frame_time: 0.0,
             delta_time: 0.0,
             is_focused: true,
             is_first_frame: true,
@@ -213,16 +204,24 @@ impl App {
         })
     }
 
-    // Renders a frame for our Vulkan app.
+    #[rustfmt::skip]
     unsafe fn render(&mut self, window: &Window) -> Result<()> {
         let in_flight_fence = self.data.in_flight_fences[self.frame];
 
+        // Wait for the last frame to finish
         self.device
             .wait_for_fences(&[in_flight_fence], true, u64::MAX)?;
 
+        // Handle Delta time
+        let time_since_start = self.start.elapsed().as_secs_f64();
+        self.delta_time = (time_since_start - self.last_frame_time) as f32;
+        self.last_frame_time = time_since_start;
+
+
         self.frame_count += 1;
-        let current_frame_time = Instant::now();
-        self.delta_time = (current_frame_time - self.last_frame_time).as_secs_f32();
+        /*OLD let current_frame_time = Instant::now();
+        self.delta_time = self.last_frame_time.elapsed().as_secs_f32();
+        self.last_frame_time = current_frame_time;*/
 
         let result = self.device.acquire_next_image_khr(
             self.data.swapchain,
@@ -298,7 +297,7 @@ impl App {
                 self.player_data.horizontal_angle += self.delta_time
                     * self.player_data.mouse_speed
                     * x_offset as f32;
-                self.player_data.vertical_angle += (current_frame_time - self.last_frame_time).as_secs_f32()
+                self.player_data.vertical_angle += self.delta_time
                     * self.player_data.mouse_speed
                     * y_offset as f32;
 
@@ -317,12 +316,12 @@ impl App {
 
         if self.input_manager.get_key(VirtualKeyCode::W) {
             let mut forward = self.player_data.forward();
-            forward.z = 0.0;
+            //forward.z = 0.0;
             self.player_data.walk(forward, self.delta_time);
         }
         if self.input_manager.get_key(VirtualKeyCode::S) {
             let mut backward = -self.player_data.forward();
-            backward.z = 0.0;
+            //backward.z = 0.0;
             self.player_data.walk(backward, self.delta_time);
         }
         if self.input_manager.get_key(VirtualKeyCode::D) {
@@ -358,13 +357,12 @@ impl App {
 
         self.input_manager.detect_new_frame();
 
-        self.last_frame_time = current_frame_time;
-
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
         Ok(())
     }
 
+    #[rustfmt::skip]
     unsafe fn update_secondary_command_buffer(&mut self, image_index: usize, model_index: usize) -> Result<vk::CommandBuffer> {
         let command_buffers = &mut self.data.secondary_command_buffers[image_index];
 
@@ -380,15 +378,15 @@ impl App {
 
         let command_buffer = command_buffers[model_index];
 
-        /*let transform = Transform{
-            position: glm::Vec3::new(-2.0, 0.0, 0.0),
+        let transform = Transform{
+            position: glm::Vec3::new(0.0, 0.0 * model_index as f32, 0.0),
             rotation: glm::Vec3::new(0.0, 0.0, 0.0),
             scale: glm::Vec3::new(1.0, 1.0, 1.0),
         };
 
         let model = transform.get_model_matrix();
 
-        let (_, model_bytes, _) = model.as_slice().align_to::<u8>();*/
+        /*let (_, model_bytes, _) = model.as_slice().align_to::<u8>();
 
         let y = (((model_index % 2) as f32) * 2.5) - 1.25;
         let z = (((model_index / 2) as f32) * -2.0) + 1.0;
@@ -404,11 +402,11 @@ impl App {
             &model,
             time * glm::radians(&glm::vec1(90.0))[0],
             &glm::vec3(0.0, 0.0, 1.0),
-        );
+        );*/
 
         let (_, model_bytes, _) = model.as_slice().align_to::<u8>();
 
-        let opacity = (model_index + 1) as f32 * 0.25;
+        let opacity: f32 = 1.0;//(model_index + 1) as f32 * 0.25;
         let opacity_bytes = &opacity.to_ne_bytes()[..];
 
         let inheritance_info = vk::CommandBufferInheritanceInfo::builder()
@@ -456,7 +454,8 @@ impl App {
         self.device.end_command_buffer(command_buffer)?;
         Ok(command_buffer)
     }
-    
+
+    #[rustfmt::skip]
     unsafe fn update_command_buffer(&mut self, image_index: usize) -> Result<()> {
         let command_pool = self.data.command_pools[image_index];
         self.device.reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())?;
@@ -495,7 +494,8 @@ impl App {
 
         self.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::SECONDARY_COMMAND_BUFFERS);
 
-        let secondary_command_buffers = (0..4)
+        //TODO: Fix "(0..1)"
+        let secondary_command_buffers = (0..1)
             .map(|i| self.update_secondary_command_buffer(image_index, i))
             .collect::<Result<Vec<_>, _>>()?;
         self.device.cmd_execute_commands(command_buffer, &secondary_command_buffers);
@@ -507,11 +507,9 @@ impl App {
         Ok(())
     }
 
-    //Updates the uniform buffer object for our Vulkan app.
+    #[rustfmt::skip]
     unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
         // MVP
-
-        let time = self.start.elapsed().as_secs_f32();
 
         let look_direction = glm::vec3(
             (self.player_data.vertical_angle.cos() * self.player_data.horizontal_angle.sin()) as f32,
@@ -537,9 +535,9 @@ impl App {
 
         let mut proj = glm::perspective_rh_zo(
             self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,
-            glm::radians(&glm::vec1(45.0))[0],
+            glm::radians(&glm::vec1(90.0))[0],
             0.1,
-            10.0,
+            100.0,
         );
 
         proj[(1, 1)] *= -1.0;
@@ -563,7 +561,6 @@ impl App {
         Ok(())
     }
 
-    /// Recreates the swapchain for our Vulkan app.
     #[rustfmt::skip]
     unsafe fn recreate_swapchain(&mut self, window: &Window) -> Result<()> {
         self.device.device_wait_idle()?;
@@ -577,17 +574,11 @@ impl App {
         create_uniform_buffers(&self.instance, &self.device, &mut self.data)?;
         create_descriptor_pool(&self.device, &mut self.data)?;
         create_descriptor_sets(&self.device, &mut self.data)?;
-        let transform = Transform{
-            position: glm::Vec3::new(-2.0, 0.0, 0.0),
-            rotation: glm::Vec3::new(0.0, 0.0, 0.0),
-            scale: glm::Vec3::new(1.0, 1.0, 1.0),
-        };
-        create_command_buffers(&self.device, &mut self.data, &transform.get_model_matrix())?;
+        create_command_buffers(&self.device, &mut self.data)?;
         self.data.images_in_flight.resize(self.data.swapchain_images.len(), vk::Fence::null());
         Ok(())
     }
 
-        //Destroys our Vulkan app.
     #[rustfmt::skip]
     unsafe fn destroy(&mut self) {
         self.device.device_wait_idle().unwrap();
@@ -616,7 +607,6 @@ impl App {
         self.instance.destroy_instance(None);
     }
 
-    //Destroys the parts of our Vulkan app related to the swapchain.
     #[rustfmt::skip]
     unsafe fn destroy_swapchain(&mut self) {
         self.device.destroy_image_view(self.data.depth_image_view, None);
@@ -633,6 +623,7 @@ impl App {
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
     }
 
+    #[rustfmt::skip]
     fn set_focused(&mut self, focused: bool) {
         self.is_focused = focused;
         self.is_first_frame = true;

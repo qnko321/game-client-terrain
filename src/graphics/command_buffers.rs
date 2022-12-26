@@ -1,36 +1,10 @@
-
-
-
-
-
-
-
-
-
-
-
 use anyhow::{Result};
-
-
 use nalgebra_glm::{Mat4};
-
-
-
-
-
-
-
-
-
 use vulkanalia::prelude::v1_0::*;
-
-
-
-
 
 use crate::AppData;
 
-pub(crate) unsafe fn create_command_buffers(device: &Device, data: &mut AppData, model_matrix: &Mat4) -> Result<()> {
+pub(crate) unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<()> {
     // Allocate
 
     let num_images = data.swapchain_images.len();

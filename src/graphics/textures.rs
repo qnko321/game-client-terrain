@@ -1,45 +1,23 @@
-
-
-
 use std::fs::File;
-
-
-
-
 use std::ptr::copy_nonoverlapping as memcpy;
-
-
 use anyhow::{Result};
-
-
-
-
-
-
-
-
-
-
+use glob::glob;
 use crate::graphics::shared_buffers::create_buffer;
 use crate::graphics::shared_images::{
     copy_buffer_to_image, create_image, create_image_view, transition_image_layout,
 };
 use crate::AppData;
-
 use vulkanalia::prelude::v1_0::*;
-
-
-
-
 
 pub(crate) unsafe fn create_texture_image(
     instance: &Instance,
     device: &Device,
     data: &mut AppData,
+    path: &str,
 ) -> Result<()> {
     // Load
 
-    let image = File::open("resources/viking_room.png")?;
+    let image = File::open(path)?;
 
     let decoder = png::Decoder::new(image);
     let mut reader = decoder.read_info()?;
@@ -124,23 +102,28 @@ pub(crate) unsafe fn create_texture_image(
 }
 
 pub(crate) unsafe fn create_texture_image_view(device: &Device, data: &mut AppData) -> Result<()> {
-    data.texture_image_view = create_image_view(
+    let image_view = create_image_view(
         device,
         data.texture_image,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageAspectFlags::COLOR,
     )?;
 
+    data.texture_image_view = image_view;
+
     Ok(())
 }
 
 pub(crate) unsafe fn create_texture_sampler(device: &Device, data: &mut AppData) -> Result<()> {
     let info = vk::SamplerCreateInfo::builder()
-        .mag_filter(vk::Filter::LINEAR)
-        .min_filter(vk::Filter::LINEAR)
-        .address_mode_u(vk::SamplerAddressMode::REPEAT)
-        .address_mode_v(vk::SamplerAddressMode::REPEAT)
-        .address_mode_w(vk::SamplerAddressMode::REPEAT)
+        // Nearest - Point
+        // Linear - Bilinear
+        // Cubic_ext - ??? (maybe trilinear)
+        .mag_filter(vk::Filter::NEAREST)
+        .min_filter(vk::Filter::NEAREST)
+        .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
         .anisotropy_enable(true)
         .max_anisotropy(16.0)
         .border_color(vk::BorderColor::INT_OPAQUE_BLACK)

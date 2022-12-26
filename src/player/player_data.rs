@@ -45,7 +45,7 @@ impl PlayerData {
         )
     }
 }
-
+/*
 impl GameObject for PlayerData {
     fn create() -> Self {
         Self {
@@ -85,4 +85,4 @@ impl GameObject for PlayerData {
             self.walk(left, app.delta_time);
         }
     }
-}
+}*/

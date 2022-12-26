@@ -1,32 +1,8 @@
-
-
-
-
-
-
 use std::mem::size_of;
-
 use std::ptr::copy_nonoverlapping as memcpy;
-
-
 use anyhow::{Result};
-
-
-
-
-
-
-
-
-
-
-
+use log::error;
 use vulkanalia::prelude::v1_0::*;
-
-
-
-
-
 use crate::graphics::shared_buffers::{copy_buffer, create_buffer};
 use crate::graphics::uniform_buffer_object::UniformBufferObject;
 use crate::graphics::vertex::Vertex;
@@ -37,6 +13,10 @@ pub(crate) unsafe fn create_vertex_buffer(
     device: &Device,
     data: &mut AppData,
 ) -> Result<()> {
+    if data.vertices.len() == 0 {
+        error!("No Vertices => Can't create a vertex buffer");
+    }
+
     // Create (staging)
 
     let size = (size_of::<Vertex>() * data.vertices.len()) as u64;
