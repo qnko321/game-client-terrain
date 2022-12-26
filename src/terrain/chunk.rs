@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::time::Instant;
 use lazy_static::lazy_static;
 use nalgebra_glm as glm;
@@ -14,12 +15,24 @@ pub(crate) struct Chunk {
 }
 
 impl Chunk {
-    pub(crate) const fn chunk_size() -> i32 {
+    pub(crate) const fn size() -> i32 {
         32
     }
 
     pub(crate) const fn voxels_len() -> i32 {
-        Chunk::chunk_size().pow(3)
+        Chunk::size() * Chunk::size() * Chunk::size()
+    }
+
+    fn get_x(&self) -> i32 {
+        self.coord.x * Self::size()
+    }
+
+    fn get_y(&self) -> i32 {
+        self.coord.y * Self::size()
+    }
+
+    fn get_z(&self) -> i32 {
+        self.coord.z * Self::size()
     }
 
     pub(crate) fn new(x: i32, y: i32, z: i32) -> Self {
@@ -30,20 +43,30 @@ impl Chunk {
     }
 
     pub(crate) fn generate(&mut self) {
-        for x in 0..Chunk::chunk_size() as u8 {
-            for y in 0..Chunk::chunk_size() as u8 {
-                for z in 0..Chunk::chunk_size() as u8 {
-                    let voxel_index = to_voxel_index(x, y, z);
-                    let mut noise_value = perlin_noise2d(x as f64 * 0.1, y as f64 * 0.1);
+        for x in 0..Chunk::size() as u8 {
+            for y in 0..Chunk::size() as u8 {
+                for z in 0..Chunk::size() as u8 {
+                    let (world_x, world_y, world_z) = self.voxel_to_world_coord(x ,y ,z);
+                    let mut noise_value = perlin_noise2d(world_x as f64 * 0.1, world_y as f64 * 0.1);
                     noise_value = remap(noise_value, -1.0, 1.0, 0.0, 1.0);
-                    let voxel_id = Self::get_voxel(x, y, z, noise_value);
+                    let voxel_id = Self::get_voxel(world_z, noise_value);
+
+                    let voxel_index = to_voxel_index(x, y, z);
                     self.voxels[voxel_index as usize] = voxel_id;
                 }
             }
         }
     }
 
-    fn get_voxel(x: u8, y: u8, z: u8, height: f64) -> u8 {
+    fn voxel_to_world_coord(&mut self, x: u8, y: u8, z: u8) -> (i32, i32, i32) {
+        let world_x = self.get_x() + x as i32;
+        let world_y = self.get_y() + y as i32;
+        let world_z =  self.get_z() + z as i32;
+
+        (world_x, world_y, world_z)
+    }
+
+    fn get_voxel(z: i32, height: f64) -> u8 {
         if z == 0 {
             return 4; // Bedrock
         }
@@ -74,11 +97,11 @@ impl Chunk {
 
     pub(crate) fn to_mesh_data(&self, ref voxel_types: &block_meshes, texture_atlas_size_in_blocks: u8, normalized_block_texture_size: f32) -> MeshData {
         let mut mesh_data = MeshData { vertices: Vec::new(), indices: Vec::new(), vertex_index: 0 };
-        for x in 0..Chunk::chunk_size() as u8 {
-            for y in 0..Chunk::chunk_size() as u8 {
-                for z in 0..Chunk::chunk_size() as u8 {
+        for x in 0..Chunk::size() as u8 {
+            for y in 0..Chunk::size() as u8 {
+                for z in 0..Chunk::size() as u8 {
                     let voxel_id = self.get_voxel_id(x, y, z);
-                    mesh_data.add_voxel(x, y, z, voxel_id, self.voxels, voxel_types, texture_atlas_size_in_blocks, normalized_block_texture_size);
+                    mesh_data.add_voxel(x, y, z, self.get_x(), self.get_y(), self.get_z(), voxel_id, self.voxels, voxel_types, texture_atlas_size_in_blocks, normalized_block_texture_size);
                 }
             }
         }
@@ -102,9 +125,9 @@ fn remap(
 }
 
 pub(crate) struct ChunkCoord {
-    x: i32,
-    y: i32,
-    z: i32,
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) z: i32,
 }
 
 pub(crate) struct MeshData {
@@ -120,7 +143,7 @@ fn get_neighbour_voxel_position(x: u8, y: u8, z: u8, direction: FaceDirection) -
             (x - 1, y, z)
         },
         FaceDirection::Front => {
-            if i32::from(x) == Chunk::chunk_size() - 1 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX,u8::MAX,u8::MAX) }
+            if i32::from(x) == Chunk::size() - 1 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX, u8::MAX, u8::MAX) }
             (x + 1, y, z)
         },
         FaceDirection::Left => {
@@ -128,7 +151,7 @@ fn get_neighbour_voxel_position(x: u8, y: u8, z: u8, direction: FaceDirection) -
             (x, y - 1, z)
         },
         FaceDirection::Right => {
-            if i32::from(y) == Chunk::chunk_size() - 1 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX,u8::MAX,u8::MAX) }
+            if i32::from(y) == Chunk::size() - 1 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX, u8::MAX, u8::MAX) }
             (x, y + 1, z)
         },
         FaceDirection::Bottom => {
@@ -136,7 +159,7 @@ fn get_neighbour_voxel_position(x: u8, y: u8, z: u8, direction: FaceDirection) -
             (x, y, z - 1)
         },
         FaceDirection::Top => {
-            if i32::from(z) == Chunk::chunk_size() - 1 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX,u8::MAX,u8::MAX) }
+            if i32::from(z) == Chunk::size() - 1 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX, u8::MAX, u8::MAX) }
             (x, y, z + 1)
         },
         FaceDirection::Other => (x, y, z)
@@ -171,6 +194,9 @@ impl MeshData {
         x: u8,
         y: u8,
         z: u8,
+        chunk_x: i32,
+        chunk_y: i32,
+        chunk_z: i32,
         voxel_id: u8,
         ref voxel_map: [u8; Chunk::voxels_len() as usize],
         ref voxel_types: &Vec<VoxelType>,
@@ -205,9 +231,9 @@ impl MeshData {
                 let vertex_uv = MeshData::calculate_uv(face.texture, uv, texture_atlas_size_in_blocks, normalized_block_texture_size);
 
                 let vertex_position = glm::vec3(
-                    x as f32 + position.x,
-                    y as f32 + position.y,
-                    z as f32 + position.z,
+                    x as f32 + position.x + chunk_x as f32,
+                    y as f32 + position.y + chunk_y as f32,
+                    z as f32 + position.z + chunk_z as f32,
                 );
                 let vertex = Vertex::new(
                     vertex_position,

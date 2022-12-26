@@ -7,8 +7,8 @@ use crate::AppData;
 pub(crate) unsafe fn create_command_buffers(device: &Device, data: &mut AppData) -> Result<()> {
     // Allocate
 
-    let num_images = data.swapchain_images.len();
-    for image_index in 0..num_images {
+    let image_count = data.swapchain_images.len();
+    for image_index in 0..image_count {
         let allocate_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(data.command_pools[image_index])
             .level(vk::CommandBufferLevel::PRIMARY)

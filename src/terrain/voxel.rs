@@ -168,9 +168,9 @@ impl Face {
 
 pub(crate) fn to_voxel_index(x: u8, y: u8, z: u8) -> u32 {
     /*x as u32 * 25 + y as u32 * 5 + z as u32*/
-    x as u32 * Chunk::chunk_size() as u32 * Chunk::chunk_size() as u32
+    x as u32 * Chunk::size() as u32 * Chunk::size() as u32
     +
-    y as u32 * Chunk::chunk_size() as u32
+    y as u32 * Chunk::size() as u32
     +
     z as u32
 }

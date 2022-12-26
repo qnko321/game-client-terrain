@@ -79,7 +79,7 @@ static TEXTURE_ATLAS_SIZE_IN_BLOCKS: u8 = 4;
 static NORMALIZED_BLOCK_TEXTURE_SIZE: f32 = 1.0 / TEXTURE_ATLAS_SIZE_IN_BLOCKS as f32;
 
 pub(crate) fn generate_world(data: &mut AppData) {
-    let mut chunk: Chunk = Chunk::new(0, 0, 0);
+    let mut chunk: Chunk = Chunk::new(0, 1, 0);
     chunk.generate();
     let mut mesh_data = get_mesh(chunk);
 
