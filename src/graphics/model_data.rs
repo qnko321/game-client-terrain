@@ -4,8 +4,6 @@ pub(crate) struct ModelData {
 
 impl Default for ModelData {
     fn default() -> Self {
-        Self {
-            index_offset: 0,
-        }
+        Self { index_offset: 0 }
     }
 }

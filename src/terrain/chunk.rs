@@ -1,20 +1,41 @@
-use std::borrow::Borrow;
-use std::time::Instant;
-use lazy_static::lazy_static;
-use nalgebra_glm as glm;
-use nalgebra_glm::round;
-use noise::{NoiseFn, Perlin, PerlinSurflet, Seedable};
-use crate::graphics::vertex::Vertex;
 use crate::terrain::perlin_noise::perlin_noise2d;
-use crate::terrain::voxel::{Face, to_voxel_index, VoxelType};
-use crate::terrain::world::block_meshes;
+use crate::terrain::voxel::{to_voxel_index};
+use crate::terrain::world::{BLOCK_MESHES};
+use crate::AppData;
+use nalgebra_glm as glm;
+use vulkanalia::{Device, Instance, vk};
+use vulkanalia::vk::DeviceV1_0;
+use anyhow::{Result};
+use crate::core::math_functions::{remap, translate};
+use crate::graphics::buffers::{create_chunk_index_buffer, create_chunk_vertex_buffer};
+use crate::terrain::chunk_coord::ChunkCoord;
+use crate::terrain::face_direction::FaceDirection;
+use crate::terrain::mesh_data::MeshData;
 
+#[derive(Clone, Debug)]
 pub(crate) struct Chunk {
+    // Data
     voxels: [u8; 32768],
     coord: ChunkCoord,
+
+    // Render
+    draw: bool,
+    //Model Matrix
+    model_matrix: glm::Mat4,
+    // State
+    are_buffers_created: bool,
+    // Vertices
+    vertex_buffer: vk::Buffer,
+    vertex_buffer_memory: vk::DeviceMemory,
+    // Indices
+    index_buffer: vk::Buffer,
+    index_buffer_memory: vk::DeviceMemory,
+    // Mesh
+    mesh: MeshData,
 }
 
 impl Chunk {
+    // Constants
     pub(crate) const fn size() -> i32 {
         32
     }
@@ -23,6 +44,7 @@ impl Chunk {
         Chunk::size() * Chunk::size() * Chunk::size()
     }
 
+    // Getters and setters
     fn get_x(&self) -> i32 {
         self.coord.x * Self::size()
     }
@@ -35,35 +57,128 @@ impl Chunk {
         self.coord.z * Self::size()
     }
 
-    pub(crate) fn new(x: i32, y: i32, z: i32) -> Self {
+    pub(crate) fn should_draw(&self) -> bool {
+        self.draw
+    }
+
+    pub(crate) fn set_should_draw(&mut self, value: bool) {
+        self.draw = value;
+    }
+
+    pub(crate) fn get_model_matrix(&self) -> glm::Mat4 {
+        self.model_matrix
+    }
+
+    pub(crate) fn get_mesh(&self) -> &MeshData {
+        &self.mesh
+    }
+
+    pub(crate) fn set_vertex_buffer(&mut self, buffer: vk::Buffer) {
+        self.vertex_buffer = buffer;
+    }
+
+    pub(crate) fn get_vertex_buffer(&self) -> vk::Buffer {
+        self.vertex_buffer
+    }
+
+    pub(crate) fn set_vertex_buffer_memory(&mut self, memory: vk::DeviceMemory) {
+        self.vertex_buffer_memory = memory;
+    }
+
+    pub(crate) fn set_index_buffer(&mut self, buffer: vk::Buffer) {
+        self.index_buffer = buffer;
+    }
+
+    pub(crate) fn get_index_buffer(&self) -> vk::Buffer {
+        self.index_buffer
+    }
+
+    pub(crate) fn set_index_buffer_memory(&mut self, memory: vk::DeviceMemory) {
+        self.index_buffer_memory = memory;
+    }
+
+    // u8 has max value of 256 but the max value of a voxel coord is 32=2^5 (3*3=9 unused bits)
+    fn get_voxel_id(&self, x: u8, y: u8, z: u8) -> u8 {
+        let index = to_voxel_index(x, y, z);
+        self.voxels[index as usize]
+    }
+
+    // Constructors
+
+    pub(crate) fn from_xyz(x: i32, y: i32, z: i32) -> Self {
+        let model_matrix = translate(glm::vec3(
+            (x * Chunk::size()) as f32,
+            (y * Chunk::size()) as f32,
+            (z * Chunk::size()) as f32,
+        ));
         Self {
+            draw: true,
             voxels: [0; Chunk::voxels_len() as usize],
             coord: ChunkCoord { x, y, z },
+            model_matrix,
+            are_buffers_created: false,
+            vertex_buffer: vk::Buffer::default(),
+            vertex_buffer_memory: vk::DeviceMemory::default(),
+            index_buffer: vk::Buffer::default(),
+            index_buffer_memory: vk::DeviceMemory::default(),
+            mesh: MeshData::default(),
         }
     }
+
+    pub(crate) fn from_coord(coord: &ChunkCoord) -> Self {
+        let model_matrix = translate(glm::vec3(
+            (coord.x * Chunk::size()) as f32,
+            (coord.y * Chunk::size()) as f32,
+            (coord.z * Chunk::size()) as f32,
+        ));
+        Self {
+            draw: true,
+            voxels: [0; Chunk::voxels_len() as usize],
+            coord: coord.clone(),
+            model_matrix,
+            are_buffers_created: false,
+            vertex_buffer: vk::Buffer::default(),
+            vertex_buffer_memory: vk::DeviceMemory::default(),
+            index_buffer: vk::Buffer::default(),
+            index_buffer_memory: vk::DeviceMemory::default(),
+            mesh: MeshData::default(),
+        }
+    }
+
+    // Conversions
+
+    fn voxel_to_world_coord(&mut self, x: u8, y: u8, z: u8) -> (i32, i32, i32) {
+        let world_x = self.get_x() + x as i32;
+        let world_y = self.get_y() + y as i32;
+        let world_z = self.get_z() + z as i32;
+
+        (world_x, world_y, world_z)
+    }
+
+    // Generation
 
     pub(crate) fn generate(&mut self) {
         for x in 0..Chunk::size() as u8 {
             for y in 0..Chunk::size() as u8 {
-                for z in 0..Chunk::size() as u8 {
-                    let (world_x, world_y, world_z) = self.voxel_to_world_coord(x ,y ,z);
-                    let mut noise_value = perlin_noise2d(world_x as f64 * 0.1, world_y as f64 * 0.1);
-                    noise_value = remap(noise_value, -1.0, 1.0, 0.0, 1.0);
-                    let voxel_id = Self::get_voxel(world_z, noise_value);
+                let world_x = self.get_x() + x as i32;
+                let world_y = self.get_y() + y as i32;
 
+                let noise_value = remap(
+                    perlin_noise2d(world_x as f64 * 0.1, world_y as f64 * 0.1),
+                    -1.0,
+                    1.0,
+                    0.0,
+                    1.0
+                );
+
+                for z in 0..Chunk::size() as u8 {
+                    let world_z = self.get_z() + z as i32;
+                    let voxel_id = Self::get_voxel(world_z, noise_value);
                     let voxel_index = to_voxel_index(x, y, z);
                     self.voxels[voxel_index as usize] = voxel_id;
                 }
             }
         }
-    }
-
-    fn voxel_to_world_coord(&mut self, x: u8, y: u8, z: u8) -> (i32, i32, i32) {
-        let world_x = self.get_x() + x as i32;
-        let world_y = self.get_y() + y as i32;
-        let world_z =  self.get_z() + z as i32;
-
-        (world_x, world_y, world_z)
     }
 
     fn get_voxel(z: i32, height: f64) -> u8 {
@@ -74,7 +189,7 @@ impl Chunk {
         let height_multiplier = 6.0;
         let solid_ground_height = 10.0;
         let terrain_height = (height * height_multiplier).floor() + solid_ground_height;
-        let mut voxel: u8;
+        let voxel: u8;
 
         if z as f64 == terrain_height {
             voxel = 1 // Grass
@@ -89,187 +204,134 @@ impl Chunk {
         voxel
     }
 
-    // u8 has max value of 256 but the max value of a voxel coord is 32=2^5 (3*3=9 unused bits)
-    fn get_voxel_id(&self, x: u8, y: u8, z: u8) -> u8 {
-        let index = to_voxel_index(x, y, z);
-        self.voxels[index as usize]
-    }
+    // Mesh
 
-    pub(crate) fn to_mesh_data(&self, ref voxel_types: &block_meshes, texture_atlas_size_in_blocks: u8, normalized_block_texture_size: f32) -> MeshData {
-        let mut mesh_data = MeshData { vertices: Vec::new(), indices: Vec::new(), vertex_index: 0 };
+    pub(crate) fn to_mesh_data(
+        &self,
+        ref voxel_types: &BLOCK_MESHES,
+        texture_atlas_size_in_blocks: u8,
+        normalized_block_texture_size: f32,
+    ) -> MeshData {
+        let mut mesh_data = MeshData::new();
         for x in 0..Chunk::size() as u8 {
             for y in 0..Chunk::size() as u8 {
                 for z in 0..Chunk::size() as u8 {
                     let voxel_id = self.get_voxel_id(x, y, z);
-                    mesh_data.add_voxel(x, y, z, self.get_x(), self.get_y(), self.get_z(), voxel_id, self.voxels, voxel_types, texture_atlas_size_in_blocks, normalized_block_texture_size);
+                    mesh_data.add_voxel(
+                        x,
+                        y,
+                        z,
+                        voxel_id,
+                        self.voxels,
+                        voxel_types,
+                        texture_atlas_size_in_blocks,
+                        normalized_block_texture_size,
+                    );
                 }
             }
         }
         mesh_data
     }
 
-    pub(crate) fn set_voxel(&mut self, x: u8, y: u8, z: u8, voxel_id: u8) {
-        let index = to_voxel_index(x, y, z);
-        self.voxels[index as usize] = voxel_id;
+    pub(crate) unsafe fn update_mesh(
+        &mut self,
+        new_mesh: MeshData,
+        instance: &Instance,
+        device: &Device,
+        data: &mut AppData,
+    ) -> Result<()> {
+        self.mesh = new_mesh;
+        self.recreate_buffers(instance, device, data)?;
+
+        Ok(())
+    }
+
+    // Buffers
+
+    unsafe fn recreate_buffers(
+        &mut self,
+        instance: &Instance,
+        device: &Device,
+        data: &mut AppData,
+    ) -> Result<()> {
+        if self.are_buffers_created {
+            self.destroy_buffers(device);
+        }
+
+        self.create_buffers(instance, device, data)?;
+        self.are_buffers_created = true;
+
+        Ok(())
+    }
+
+    unsafe fn destroy_buffers(&self, device: &Device) {
+        device.free_memory(self.index_buffer_memory, None);
+        device.destroy_buffer(self.index_buffer, None);
+        device.free_memory(self.vertex_buffer_memory, None);
+        device.destroy_buffer(self.vertex_buffer, None);
+    }
+
+    unsafe fn create_buffers(
+        &mut self,
+        instance: &Instance,
+        device: &Device,
+        data: &mut AppData,
+    ) -> Result<()> {
+        create_chunk_vertex_buffer(instance, device, data, self)?;
+        create_chunk_index_buffer(instance, device, data, self)?;
+
+        Ok(())
+    }
+
+    pub(crate) unsafe fn destroy(&self, device: &Device) {
+        self.destroy_buffers(device);
     }
 }
 
-fn remap(
-    value: f64,
-    source_min: f64,
-    source_max: f64,
-    dest_min: f64,
-    dest_max: f64,
-) -> f64 {
-    dest_min + ((value - source_min) / (source_max - source_min)) * (dest_max - dest_min)
-}
-
-pub(crate) struct ChunkCoord {
-    pub(crate) x: i32,
-    pub(crate) y: i32,
-    pub(crate) z: i32,
-}
-
-pub(crate) struct MeshData {
-    pub(crate) vertices: Vec<Vertex>,
-    pub(crate) indices: Vec<u32>,
-    vertex_index: u32,
-}
-
-fn get_neighbour_voxel_position(x: u8, y: u8, z: u8, direction: FaceDirection) -> (u8,u8,u8) {
+pub(crate) fn get_neighbour_voxel_position(x: u8, y: u8, z: u8, direction: FaceDirection) -> (u8, u8, u8) {
     match direction {
         FaceDirection::Back => {
-            if x == 0 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX,u8::MAX,u8::MAX) }
+            if x == 0 {
+                /*Get id from world (voxel is in another chunk)*/
+                return (u8::MAX, u8::MAX, u8::MAX);
+            }
             (x - 1, y, z)
-        },
+        }
         FaceDirection::Front => {
-            if i32::from(x) == Chunk::size() - 1 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX, u8::MAX, u8::MAX) }
+            if i32::from(x) == Chunk::size() - 1 {
+                /*Get id from world (voxel is in another chunk)*/
+                return (u8::MAX, u8::MAX, u8::MAX);
+            }
             (x + 1, y, z)
-        },
+        }
         FaceDirection::Left => {
-            if y == 0 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX,u8::MAX,u8::MAX) }
+            if y == 0 {
+                /*Get id from world (voxel is in another chunk)*/
+                return (u8::MAX, u8::MAX, u8::MAX);
+            }
             (x, y - 1, z)
-        },
+        }
         FaceDirection::Right => {
-            if i32::from(y) == Chunk::size() - 1 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX, u8::MAX, u8::MAX) }
+            if i32::from(y) == Chunk::size() - 1 {
+                /*Get id from world (voxel is in another chunk)*/
+                return (u8::MAX, u8::MAX, u8::MAX);
+            }
             (x, y + 1, z)
-        },
+        }
         FaceDirection::Bottom => {
-            if z == 0 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX,u8::MAX,u8::MAX) }
+            if z == 0 {
+                /*Get id from world (voxel is in another chunk)*/
+                return (u8::MAX, u8::MAX, u8::MAX);
+            }
             (x, y, z - 1)
-        },
+        }
         FaceDirection::Top => {
-            if i32::from(z) == Chunk::size() - 1 { /*Get id from world (voxel is in another chunk)*/ return (u8::MAX, u8::MAX, u8::MAX) }
+            if i32::from(z) == Chunk::size() - 1 {
+                /*Get id from world (voxel is in another chunk)*/
+                return (u8::MAX, u8::MAX, u8::MAX);
+            }
             (x, y, z + 1)
-        },
-        FaceDirection::Other => (x, y, z)
-    }
-}
-
-static mut AIR_COUNTER: u32 = 0;
-
-impl MeshData {
-    fn calculate_uv(texture_index: u16, uv: glm::Vec2, texture_atlas_size_in_blocks: u8, normalized_block_texture_size: f32) -> glm::Vec2 {
-        //let x_offset = face.texture as f32 / texture_atlas_size_in_blocks as f32;
-        //let y_offset = (face.texture / texture_atlas_size_in_blocks as u16 ) as f32 * normalized_block_texture_size;
-
-        //let new_uv = glm::vec2((uv.x / texture_atlas_size_in_blocks as f32) + x_offset, uv.y / texture_atlas_size_in_blocks as f32 + y_offset);
-
-        let mut x_offset = texture_index as f32 / texture_atlas_size_in_blocks as f32;
-        let contained = x_offset - x_offset % 1.0;
-        x_offset -= contained;
-        let mut y_offset: f32 = (texture_index as f32 - texture_index as f32 % texture_atlas_size_in_blocks as f32) * (normalized_block_texture_size * normalized_block_texture_size) as f32;//contained * normalized_block_texture_size + (texture_index / texture_atlas_size_in_blocks as u16 ) as f32 * normalized_block_texture_size;
-
-        x_offset = x_offset + uv.x * normalized_block_texture_size;
-        y_offset = y_offset + uv.y * normalized_block_texture_size;
-
-        glm::vec2(
-            x_offset,
-            y_offset,
-        )
-    }
-
-    fn add_voxel(
-        &mut self,
-        x: u8,
-        y: u8,
-        z: u8,
-        chunk_x: i32,
-        chunk_y: i32,
-        chunk_z: i32,
-        voxel_id: u8,
-        ref voxel_map: [u8; Chunk::voxels_len() as usize],
-        ref voxel_types: &Vec<VoxelType>,
-        texture_atlas_size_in_blocks: u8,
-        normalized_block_texture_size: f32,
-    ) {
-        if voxel_id == 0 {
-            unsafe { AIR_COUNTER += 1 }
-            return;
         }
-        let voxel: &VoxelType = voxel_types.get(voxel_id as usize).unwrap();
-
-        for face in &voxel.faces {
-            if face.direction != FaceDirection::Other {
-                let (n_x, n_y, n_z) = get_neighbour_voxel_position(x, y, z, face.direction.clone());
-                let neighbour_voxel_id = if n_x == u8::MAX && n_y == u8::MAX && n_z == u8::MAX {
-                    0
-                } else {
-                    voxel_map[to_voxel_index(n_x, n_y, n_z) as usize]
-                };
-                let voxel: &VoxelType = voxel_types.get(neighbour_voxel_id as usize).unwrap();
-                if !voxel.should_draw(face.direction.reverse_face_direction()) {
-                    continue
-                }
-            }
-            for i in 0..face.vertices.len() {
-                let position = *face.vertices.get(i).unwrap();
-                let uv = *face.uvs.get(i).unwrap();
-
-
-
-                let vertex_uv = MeshData::calculate_uv(face.texture, uv, texture_atlas_size_in_blocks, normalized_block_texture_size);
-
-                let vertex_position = glm::vec3(
-                    x as f32 + position.x + chunk_x as f32,
-                    y as f32 + position.y + chunk_y as f32,
-                    z as f32 + position.z + chunk_z as f32,
-                );
-                let vertex = Vertex::new(
-                    vertex_position,
-                    vertex_uv,
-                );
-                self.vertices.push(vertex);
-            }
-            for index in &face.indices {
-                self.indices.push(self.vertex_index + index);
-            }
-            self.vertex_index += face.vertices.len() as u32;
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) enum FaceDirection {
-    Front = 0,
-    Back,
-    Left,
-    Right,
-    Top,
-    Bottom,
-    Other
-}
-
-impl FaceDirection {
-    pub(crate) fn reverse_face_direction(&self) -> FaceDirection {
-        match self {
-            FaceDirection::Front => FaceDirection::Back,
-            FaceDirection::Back => FaceDirection::Front,
-            FaceDirection::Left => FaceDirection::Right,
-            FaceDirection::Right => FaceDirection::Left,
-            FaceDirection::Top => FaceDirection::Bottom,
-            FaceDirection::Bottom => FaceDirection::Top,
-            FaceDirection::Other => FaceDirection::Other,
-        }
+        FaceDirection::Other => (x, y, z),
     }
 }

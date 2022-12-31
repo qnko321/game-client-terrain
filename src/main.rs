@@ -7,26 +7,23 @@
     clippy::unnecessary_wraps
 )]
 
-mod graphics;
-mod player;
 mod controlls;
 mod core;
+mod graphics;
+mod player;
 mod terrain;
 
-use std::io::prelude::*;
-use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::fs::{File};
 use std::mem::size_of;
 use std::path::Path;
 
-use std::ptr::{copy_nonoverlapping as memcpy};
+use std::ptr::copy_nonoverlapping as memcpy;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
-use log::*;
 use nalgebra_glm as glm;
 
-use winit::dpi::{LogicalSize};
+use winit::dpi::LogicalSize;
 use winit::event::{Event, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowBuilder};
@@ -34,12 +31,13 @@ use winit::window::{Fullscreen, Window, WindowBuilder};
 use enigo::*;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::prelude::v1_0::*;
-use vulkanalia::vk::ExtDebugUtilsExtension;
+use vulkanalia::vk::{CommandBuffer, ExtDebugUtilsExtension};
 use vulkanalia::vk::KhrSurfaceExtension;
 use vulkanalia::vk::KhrSwapchainExtension;
 use vulkanalia::window as vk_window;
 
-use crate::graphics::buffers::{create_index_buffer, create_uniform_buffers, create_vertex_buffer};
+use crate::controlls::input_manager::InputManager;
+use crate::graphics::buffers::{create_uniform_buffers};
 use crate::graphics::command_buffers::create_command_buffers;
 use crate::graphics::command_pool::create_command_pools;
 use crate::graphics::depth_objects::create_depth_objects;
@@ -47,24 +45,22 @@ use crate::graphics::descriptors::{create_descriptor_pool, create_descriptor_set
 use crate::graphics::framebuffers::create_framebuffers;
 use crate::graphics::instance::create_instance;
 use crate::graphics::logical_device::create_logical_device;
-use crate::graphics::models::load_model;
 use crate::graphics::pipeline::{
     create_descriptor_set_layout, create_pipeline, create_render_pass,
 };
 use crate::graphics::swapchain::{create_swapchain, create_swapchain_image_views};
 use crate::graphics::sync_objects::create_sync_objects;
-use crate::graphics::textures::{create_texture_image_view, create_texture_image, create_texture_sampler};
+use crate::graphics::textures::{
+    create_texture_image, create_texture_image_view, create_texture_sampler,
+};
 use crate::graphics::uniform_buffer_object::UniformBufferObject;
 use crate::graphics::vertex::Vertex;
-use crate::controlls::input_manager::InputManager;
-use crate::core::transform::Transform;
 use crate::player::player_data::PlayerData;
-use crate::core::game_object::GameObject;
-use crate::terrain::world::generate_world;
+use crate::terrain::world::{World};
 
 //Whether the validation layers should be enabled.
 const VALIDATION_ENABLED: bool = false; //cfg!(debug_assertions)
-//The name of the validation layers.
+                                        //The name of the validation layers.
 const VALIDATION_LAYER: vk::ExtensionName =
     vk::ExtensionName::from_bytes(b"VK_LAYER_KHRONOS_validation");
 
@@ -134,6 +130,7 @@ struct App {
     entry: Entry,
     instance: Instance,
     data: AppData,
+    world: World,
     device: Device,
     frame: usize,
     resized: bool,
@@ -170,9 +167,19 @@ impl App {
         create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
         //load_model(&mut data, "resources/viking_room.obj")?;
-        generate_world(&mut data);
-        create_vertex_buffer(&instance, &device, &mut data)?;
-        create_index_buffer(&instance, &device, &mut data)?;
+
+        /*let mut chunk_renderer = ChunkRenderData::new(0, 0, 0);
+        let mut chunk = Chunk::new(0, 0, 0);
+        chunk.generate();
+        let mesh_data = get_mesh(chunk);
+        chunk_renderer.update_mesh(mesh_data, &instance, &device, &mut data)?;
+        data.chunks_render_data.push(chunk_renderer);*/
+
+        //generate_world(&mut data);
+        //create_vertex_buffer(&instance, &device, &mut data)?;
+        //create_index_buffer(&instance, &device, &mut data)?;
+        let mut world = World::new();
+        world.load_spawn(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
         create_descriptor_pool(&device, &mut data)?;
         create_descriptor_sets(&device, &mut data)?;
@@ -181,16 +188,17 @@ impl App {
 
         let mut player_data = PlayerData::default();
         player_data.horizontal_angle = 1.57;
-        player_data.transform.position = glm::Vec3::new(4.0, 0.0, 0.0);
+        player_data.transform.position = glm::Vec3::new(0.0, 0.0, 20.0);
         player_data.vertical_angle = 3.14;
         player_data.mouse_speed = 2.0;
-        player_data.move_speed = 5.0;
+        player_data.move_speed = 15.0;
 
         Ok(Self {
             entry,
             instance,
             data,
             device,
+            world,
             input_manager: InputManager::new(),
             frame: 0,
             resized: false,
@@ -351,9 +359,14 @@ impl App {
             self.is_first_frame = true;
         }
 
-        if self.input_manager.get_key_down(VirtualKeyCode::Space) {
-            info!("Created a model");
-        }
+        self.world.update_view_distance(
+            self.player_data.transform.position.x as i32,
+            self.player_data.transform.position.y as i32,
+            self.player_data.transform.position.z as i32,
+            &self.instance,
+            &self.device,
+            &mut self.data,
+        )?;
 
         self.input_manager.detect_new_frame();
 
@@ -378,13 +391,12 @@ impl App {
 
         let command_buffer = command_buffers[model_index];
 
-        let transform = Transform{
+        /*let transform = Transform{
             position: glm::Vec3::new(0.0, 0.0 * model_index as f32, 0.0),
             rotation: glm::Vec3::new(0.0, 0.0, 0.0),
             scale: glm::Vec3::new(1.0, 1.0, 1.0),
-        };
-
-        let model = transform.get_model_matrix();
+        };*/
+        //let model = glm::Mat4::identity();//transform.get_model_matrix();
 
         /*let (_, model_bytes, _) = model.as_slice().align_to::<u8>();
 
@@ -404,7 +416,15 @@ impl App {
             &glm::vec3(0.0, 0.0, 1.0),
         );*/
 
-        let (_, model_bytes, _) = model.as_slice().align_to::<u8>();
+        // TODO: Properly handle errors
+        let chunk = self.world.get_chunk_by_index(model_index).unwrap();
+
+        if !chunk.should_draw() {
+            return Err(anyhow!("Don't draw chunk"));
+        }
+
+        let binding = chunk.get_model_matrix();
+        let (_, model_bytes, _) = binding.as_slice().align_to::<u8>();
 
         let opacity: f32 = 1.0;//(model_index + 1) as f32 * 0.25;
         let opacity_bytes = &opacity.to_ne_bytes()[..];
@@ -425,8 +445,8 @@ impl App {
             vk::PipelineBindPoint::GRAPHICS,
             self.data.pipeline,
         );
-        self.device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.data.vertex_buffer], &[0]);
-        self.device.cmd_bind_index_buffer(command_buffer, self.data.index_buffer, 0, vk::IndexType::UINT32);
+        self.device.cmd_bind_vertex_buffers(command_buffer, 0, &[chunk.get_vertex_buffer()], &[0]);
+        self.device.cmd_bind_index_buffer(command_buffer, chunk.get_index_buffer(), 0, vk::IndexType::UINT32);
         self.device.cmd_bind_descriptor_sets(
             command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
@@ -449,7 +469,7 @@ impl App {
             64,
             opacity_bytes,
         );
-        self.device.cmd_draw_indexed(command_buffer, self.data.indices.len() as u32, 1, 0, 0, 0);
+        self.device.cmd_draw_indexed(command_buffer, chunk.get_mesh().indices.len() as u32, 1, 0, 0, 0);
 
         self.device.end_command_buffer(command_buffer)?;
         Ok(command_buffer)
@@ -495,9 +515,23 @@ impl App {
         self.device.cmd_begin_render_pass(command_buffer, &info, vk::SubpassContents::SECONDARY_COMMAND_BUFFERS);
 
         //TODO: Fix "(0..1)"
-        let secondary_command_buffers = (0..1)
-            .map(|i| self.update_secondary_command_buffer(image_index, i))
-            .collect::<Result<Vec<_>, _>>()?;
+        /*let secondary_command_buffers = (0..self.world.chunks_len())
+            .map(|i| {
+                match self.update_secondary_command_buffer(image_index, i) {
+                    Ok(buffer) => buffer,
+                    Err(err) => {}
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;*/
+
+        let mut secondary_command_buffers = Vec::<CommandBuffer>::new();
+        for chunk_index in 0..self.world.chunks_len() {
+            match self.update_secondary_command_buffer(image_index, chunk_index) {
+                Ok(buffer) => secondary_command_buffers.push(buffer),
+                Err(_) => {},
+            }
+        }
+
         self.device.cmd_execute_commands(command_buffer, &secondary_command_buffers);
 
         self.device.cmd_end_render_pass(command_buffer);
@@ -588,6 +622,7 @@ impl App {
         self.data.in_flight_fences.iter().for_each(|f| self.device.destroy_fence(*f, None));
         self.data.render_finished_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
         self.data.image_available_semaphores.iter().for_each(|s| self.device.destroy_semaphore(*s, None));
+        self.world.destroy(&self.device);
         self.device.free_memory(self.data.index_buffer_memory, None);
         self.device.destroy_buffer(self.data.index_buffer, None);
         self.device.free_memory(self.data.vertex_buffer_memory, None);

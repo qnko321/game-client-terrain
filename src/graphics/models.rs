@@ -1,15 +1,9 @@
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 
-use anyhow::{Result};
-use nalgebra_glm as glm;
+use anyhow::Result;
 
-use crate::graphics::vertex::Vertex;
 use crate::AppData;
-use crate::terrain::chunk::Chunk;
-use crate::terrain::voxel::{Face, VoxelType};
-use crate::terrain::world::get_mesh;
 
 pub(crate) fn load_model(data: &mut AppData, path: &str) -> Result<()> {
     let mut reader = BufReader::new(File::open(path)?);
@@ -24,9 +18,6 @@ pub(crate) fn load_model(data: &mut AppData, path: &str) -> Result<()> {
     )?;
 
     //let mut unique_vertices = HashMap::new();
-
-
-
 
     /*let block = VoxelType::new(
         Face::block_faces([0; 6]),

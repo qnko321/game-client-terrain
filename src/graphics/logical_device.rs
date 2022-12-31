@@ -1,33 +1,11 @@
-
 use std::collections::HashSet;
 
-
-
-
-
-
-
-
-
-use anyhow::{Result};
-
-
-
-
-
-
-
-
-
+use anyhow::Result;
 
 use crate::graphics::queue_family_indices::QueueFamilyIndices;
 use crate::{AppData, DEVICE_EXTENSIONS, VALIDATION_ENABLED, VALIDATION_LAYER};
 
 use vulkanalia::prelude::v1_0::*;
-
-
-
-
 
 pub(crate) unsafe fn create_logical_device(
     instance: &Instance,

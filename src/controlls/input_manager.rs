@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
-use winit::event::{DeviceId, ElementState, KeyboardInput, VirtualKeyCode};
 use anyhow::{anyhow, Result};
-
+use winit::event::{DeviceId, ElementState, KeyboardInput, VirtualKeyCode};
 
 #[derive(Clone, Debug)]
 pub(crate) struct InputManager {
@@ -22,7 +21,13 @@ impl InputManager {
         }
     }
 
-    pub(crate) fn detect_change(&mut self, device_id: DeviceId, input: KeyboardInput, is_synthetic: bool, current_frame: u128) -> Result<()> {
+    pub(crate) fn detect_change(
+        &mut self,
+        device_id: DeviceId,
+        input: KeyboardInput,
+        is_synthetic: bool,
+        current_frame: u128,
+    ) -> Result<()> {
         if current_frame != self.last_frame {
             self.last_frame = current_frame;
             self.pressed_current_frame.clear();
@@ -39,10 +44,13 @@ impl InputManager {
 
         match input.state {
             ElementState::Pressed => {
-                if !self.pressed_current_frame.contains(&key_code) && !self.currently_pressed.contains_key(&key_code) {
+                if !self.pressed_current_frame.contains(&key_code)
+                    && !self.currently_pressed.contains_key(&key_code)
+                {
                     self.pressed_current_frame.push(key_code);
                 }
-                self.currently_pressed.insert(key_code, self.currently_pressed.len());
+                self.currently_pressed
+                    .insert(key_code, self.currently_pressed.len());
             }
             ElementState::Released => {
                 self.currently_pressed.remove(&key_code);

@@ -1,5 +1,4 @@
-use anyhow::{Result};
-use nalgebra_glm::{Mat4};
+use anyhow::Result;
 use vulkanalia::prelude::v1_0::*;
 
 use crate::AppData;

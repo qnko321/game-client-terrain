@@ -1,12 +1,11 @@
-use std::fs::File;
-use std::ptr::copy_nonoverlapping as memcpy;
-use anyhow::{Result};
-use glob::glob;
 use crate::graphics::shared_buffers::create_buffer;
 use crate::graphics::shared_images::{
     copy_buffer_to_image, create_image, create_image_view, transition_image_layout,
 };
 use crate::AppData;
+use anyhow::Result;
+use std::fs::File;
+use std::ptr::copy_nonoverlapping as memcpy;
 use vulkanalia::prelude::v1_0::*;
 
 pub(crate) unsafe fn create_texture_image(

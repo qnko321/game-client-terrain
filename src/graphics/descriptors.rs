@@ -1,7 +1,6 @@
+use anyhow::Result;
 use std::mem::size_of;
-use anyhow::{Result};
 use vulkanalia::prelude::v1_0::*;
-use vulkanalia::vk::Sampler;
 
 use crate::graphics::uniform_buffer_object::UniformBufferObject;
 use crate::AppData;

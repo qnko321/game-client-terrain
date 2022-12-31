@@ -1,5 +1,6 @@
+use crate::terrain::chunk::{Chunk};
 use nalgebra_glm as glm;
-use crate::terrain::chunk::{Chunk, FaceDirection};
+use crate::terrain::face_direction::FaceDirection;
 
 #[derive(Debug)]
 pub(crate) struct VoxelType {
@@ -19,7 +20,9 @@ impl VoxelType {
     }
 
     pub(crate) fn should_draw(&self, direction: FaceDirection) -> bool {
-        if direction == FaceDirection::Other { return true; }
+        if direction == FaceDirection::Other {
+            return true;
+        }
         self.draw_neighbours[direction as usize]
     }
 }
@@ -169,8 +172,6 @@ impl Face {
 pub(crate) fn to_voxel_index(x: u8, y: u8, z: u8) -> u32 {
     /*x as u32 * 25 + y as u32 * 5 + z as u32*/
     x as u32 * Chunk::size() as u32 * Chunk::size() as u32
-    +
-    y as u32 * Chunk::size() as u32
-    +
-    z as u32
+        + y as u32 * Chunk::size() as u32
+        + z as u32
 }

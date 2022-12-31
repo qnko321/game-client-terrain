@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
-use vulkanalia::prelude::v1_0::*;
 use crate::graphics::depth_objects::get_depth_format;
 use crate::graphics::vertex::Vertex;
 use crate::AppData;
+use anyhow::{anyhow, Result};
+use vulkanalia::prelude::v1_0::*;
 
 pub(crate) unsafe fn create_render_pass(
     instance: &Instance,

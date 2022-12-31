@@ -1,13 +1,13 @@
-use std::collections::HashSet;
-use std::ffi::CStr;
-use std::os::raw::c_void;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use log::*;
-use winit::window::{Window};
+use std::collections::HashSet;
+use std::ffi::CStr;
+use std::os::raw::c_void;
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::ExtDebugUtilsExtension;
 use vulkanalia::window as vk_window;
+use winit::window::Window;
 
 use crate::{AppData, VALIDATION_ENABLED, VALIDATION_LAYER};
 

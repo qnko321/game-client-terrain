@@ -1,4 +1,3 @@
-
 use nalgebra_glm as glm;
 
 pub(crate) fn quat_from_euler_vec3(angles: glm::Vec3) -> glm::Quat {

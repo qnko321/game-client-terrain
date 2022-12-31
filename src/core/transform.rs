@@ -1,6 +1,6 @@
 use nalgebra_glm as glm;
 
-use crate::core::matrix_functions::*;
+use crate::core::math_functions::*;
 use crate::core::trigonometry_shared::FastConversions;
 
 #[derive(Clone, Debug, Default)]
@@ -12,7 +12,8 @@ pub(crate) struct Transform {
 
 impl Transform {
     pub(crate) fn get_model_matrix(&self) -> glm::Mat4 {
-        translate(self.position) * glm::quat_to_mat4(&self.euler_to_quat()) * scale(self.scale) //(rotate_z(self.rotation.z) * rotate_y(self.rotation.y) * rotate_x(self.rotation.x))        (rotate(self.rotation)
+        translate(self.position) * glm::quat_to_mat4(&self.euler_to_quat()) * scale(self.scale)
+        //(rotate_z(self.rotation.z) * rotate_y(self.rotation.y) * rotate_x(self.rotation.x))        (rotate(self.rotation)
     }
 
     pub(crate) fn euler_to_quat(&self) -> glm::Qua<f32> {
@@ -50,7 +51,7 @@ impl Transform {
             /*(self.horizontal_angle - 3.14 / 2.0).sin() as f32,
             (self.horizontal_angle - 3.14 / 2.0).cos() as f32,
             0.0,*/
-            0.0,0.0,0.0
+            0.0, 0.0, 0.0,
         )
     }
 }

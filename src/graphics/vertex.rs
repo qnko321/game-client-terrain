@@ -1,6 +1,6 @@
+use nalgebra_glm as glm;
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
-use nalgebra_glm as glm;
 use vulkanalia::prelude::v1_0::*;
 
 #[repr(C)]
@@ -12,10 +12,7 @@ pub(crate) struct Vertex {
 
 impl Vertex {
     pub fn new(position: glm::Vec3, uv: glm::Vec2) -> Self {
-        Self {
-            position,
-            uv,
-        }
+        Self { position, uv }
     }
 
     pub(crate) fn binding_description() -> vk::VertexInputBindingDescription {

@@ -1,9 +1,5 @@
-
-use nalgebra_glm as glm;
-use winit::event::VirtualKeyCode;
-use crate::{App};
-use crate::core::game_object::GameObject;
 use crate::core::transform::Transform;
+use nalgebra_glm as glm;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PlayerData {
@@ -25,7 +21,7 @@ impl PlayerData {
     }
 
     pub(crate) fn walk(&mut self, direction: glm::Vec3, delta_time: f32) {
-        let new_pos =  direction * self.move_speed * delta_time;
+        let new_pos = direction * self.move_speed * delta_time;
         self.transform.position += new_pos;
     }
 
@@ -34,7 +30,8 @@ impl PlayerData {
             (self.vertical_angle.cos() * self.horizontal_angle.sin()) as f32,
             (self.vertical_angle.cos() * self.horizontal_angle.cos()) as f32,
             self.vertical_angle.sin() as f32,
-        ).normalize()
+        )
+        .normalize()
     }
 
     pub(crate) fn right(&mut self) -> glm::Vec3 {
