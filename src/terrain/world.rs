@@ -8,6 +8,7 @@ use vulkanalia::{Device, Instance};
 use anyhow::{anyhow, Result};
 use log::error;
 use crate::terrain::chunk_coord::ChunkCoord;
+use crate::terrain::face_direction::FaceDirection;
 use crate::terrain::mesh_data::MeshData;
 
 lazy_static!(
@@ -103,22 +104,28 @@ impl World {
         Self {
             chunks: HashMap::new(),
             previously_active_chunks: Vec::new(),
-            last_player_chunk: ChunkCoord::from_world_coords(0, 0, 0),
+            last_player_chunk: ChunkCoord::zero(),
         }
     }
 
     pub(crate) unsafe fn load_spawn(&mut self, instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
         for x in -VIEW_DISTANCE_IN_CHUNKS..VIEW_DISTANCE_IN_CHUNKS {
             for y in -VIEW_DISTANCE_IN_CHUNKS..VIEW_DISTANCE_IN_CHUNKS {
-                let coord = ChunkCoord { x: x as i32, y: y as i32, z: 0 };
-                let mut chunk = Chunk::from_coord(&coord);
-                chunk.generate();
-                let mesh_data = get_mesh(&chunk);
-                chunk.update_mesh(mesh_data, instance, device, data)?;
-                self.chunks.insert(coord, chunk);
-                self.previously_active_chunks.push(coord);
+                self.load_spawn_chunk(x, y, instance, device, data)?;
             }
         }
+
+        Ok(())
+    }
+
+    unsafe fn load_spawn_chunk(&mut self, x: i8, y: i8, instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
+        let coord = ChunkCoord { x: x as i32, y: y as i32, z: 0 };
+        let mut chunk = Chunk::from_coord(&coord);
+        chunk.generate();
+        let mesh_data = get_mesh(&self, &mut chunk);
+        chunk.update_mesh(mesh_data, instance, device, data)?;
+        self.chunks.insert(coord, chunk);
+        self.previously_active_chunks.push(coord);
 
         Ok(())
     }
@@ -155,7 +162,7 @@ impl World {
                 } else {
                     let mut chunk = Chunk::from_coord(&chunk_coord);
                     chunk.generate();
-                    let mesh_data = get_mesh(&chunk);
+                    let mesh_data = get_mesh(&self, &mut chunk);
                     chunk.update_mesh(mesh_data, instance, device, data)?;
                     self.chunks.insert(chunk_coord, chunk);
                     self.previously_active_chunks.push(chunk_coord);
@@ -188,10 +195,110 @@ impl World {
 
         Err(anyhow!("No chunk at index: {}", index))
     }
+
+    pub(crate) fn get_voxel_id(&self, chunk_coord: ChunkCoord, voxel_x: u8, voxel_y: u8, voxel_z: u8) -> u8 {
+        let chunk = self.chunks.get(&chunk_coord);
+        return match chunk {
+            Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y, voxel_z),
+            None => 0,
+        }
+    }
+
+    pub(crate) fn get_neighbour_voxel_id(&self, chunk_coord: ChunkCoord, voxel_x: u8, voxel_y: u8, voxel_z: u8, direction: FaceDirection) -> u8 {
+        match direction {
+            FaceDirection::Back => {
+                if voxel_x == 0 {
+                    let chunk = self.chunks.get(&chunk_coord.add_x_to_new(-1));
+                    return match chunk {
+                        Some(chunk) => chunk.get_voxel_id((Chunk::size() - 1) as u8, voxel_y, voxel_z),
+                        None => 0,
+                    }
+                }
+                let chunk = self.chunks.get(&chunk_coord);
+                match chunk {
+                    Some(chunk) => chunk.get_voxel_id(voxel_x - 1, voxel_y, voxel_z),
+                    None => 0,
+                }
+            }
+            FaceDirection::Front => {
+                if i32::from(voxel_x) == Chunk::size() - 1 {
+                    let chunk = self.chunks.get(&chunk_coord.add_x_to_new(1));
+                    return match chunk {
+                        Some(chunk) => chunk.get_voxel_id(0, voxel_y, voxel_z),
+                        None => 0,
+                    }
+                }
+                let chunk = self.chunks.get(&chunk_coord);
+                match chunk {
+                    Some(chunk) => chunk.get_voxel_id(voxel_x + 1, voxel_y, voxel_z),
+                    None => 0,
+                }
+            }
+            FaceDirection::Left => {
+                if voxel_y == 0 {
+                    let chunk = self.chunks.get(&chunk_coord.add_y_to_new(-1));
+                    return match chunk {
+                        Some(chunk) => chunk.get_voxel_id(voxel_x, (Chunk::size() - 1) as u8, voxel_z),
+                        None => 0,
+                    }
+                }
+                let chunk = self.chunks.get(&chunk_coord);
+                match chunk {
+                    Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y - 1, voxel_z),
+                    None => 0,
+                }
+            }
+            FaceDirection::Right => {
+                if i32::from(voxel_y) == Chunk::size() - 1 {
+                    let chunk = self.chunks.get(&chunk_coord.add_y_to_new(1));
+                    return match chunk {
+                        Some(chunk) => chunk.get_voxel_id(voxel_x, (Chunk::size() - 1) as u8, voxel_z),
+                        None => 0,
+                    }
+                }
+                let chunk = self.chunks.get(&chunk_coord);
+                match chunk {
+                    Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y + 1, voxel_z),
+                    None => 0,
+                }
+            }
+            FaceDirection::Bottom => {
+                if voxel_z == 0 {
+                    let chunk = self.chunks.get(&chunk_coord.add_z_to_new(-1));
+                    return match chunk {
+                        Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y, (Chunk::size() - 1) as u8),
+                        None => 0,
+                    }
+                }
+                let chunk = self.chunks.get(&chunk_coord);
+                match chunk {
+                    Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y, voxel_z - 1),
+                    None => 0,
+                }
+            }
+            FaceDirection::Top => {
+                if i32::from(voxel_z) == Chunk::size() - 1 {
+                    let chunk = self.chunks.get(&chunk_coord.add_z_to_new(1));
+                    return match chunk {
+                        Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y, 0),
+                        None => 0,
+                    }
+                }
+                let chunk = self.chunks.get(&chunk_coord);
+                match chunk {
+                    Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y, voxel_z + 1),
+                    None => 0,
+                }
+            }
+            //TODO: FIX
+            FaceDirection::Other => 0,
+        }
+    }
 }
 
-pub(crate) fn get_mesh(chunk: &Chunk) -> MeshData {
+pub(crate) fn get_mesh(world: &World, chunk: &mut Chunk) -> MeshData {
     let data = chunk.to_mesh_data(
+        world,
         &BLOCK_MESHES,
         TEXTURE_ATLAS_SIZE_IN_BLOCKS,
         NORMALIZED_BLOCK_TEXTURE_SIZE,

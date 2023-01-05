@@ -1,6 +1,6 @@
 use crate::terrain::perlin_noise::perlin_noise2d;
-use crate::terrain::voxel::{to_voxel_index};
-use crate::terrain::world::{BLOCK_MESHES};
+use crate::terrain::voxel::{to_voxel_index, VoxelType};
+use crate::terrain::world::{BLOCK_MESHES, World};
 use crate::AppData;
 use nalgebra_glm as glm;
 use vulkanalia::{Device, Instance, vk};
@@ -8,6 +8,8 @@ use vulkanalia::vk::DeviceV1_0;
 use anyhow::{Result};
 use crate::core::math_functions::{remap, translate};
 use crate::graphics::buffers::{create_chunk_index_buffer, create_chunk_vertex_buffer};
+use crate::graphics::texturing_shared::calculate_uv;
+use crate::graphics::vertex::Vertex;
 use crate::terrain::chunk_coord::ChunkCoord;
 use crate::terrain::face_direction::FaceDirection;
 use crate::terrain::mesh_data::MeshData;
@@ -17,7 +19,6 @@ pub(crate) struct Chunk {
     // Data
     voxels: [u8; 32768],
     coord: ChunkCoord,
-
     // Render
     draw: bool,
     //Model Matrix
@@ -98,7 +99,7 @@ impl Chunk {
     }
 
     // u8 has max value of 256 but the max value of a voxel coord is 32=2^5 (3*3=9 unused bits)
-    fn get_voxel_id(&self, x: u8, y: u8, z: u8) -> u8 {
+    pub(crate) fn get_voxel_id(&self, x: u8, y: u8, z: u8) -> u8 {
         let index = to_voxel_index(x, y, z);
         self.voxels[index as usize]
     }
@@ -207,22 +208,26 @@ impl Chunk {
     // Mesh
 
     pub(crate) fn to_mesh_data(
-        &self,
+        &mut self,
+        world: &World,
         ref voxel_types: &BLOCK_MESHES,
         texture_atlas_size_in_blocks: u8,
         normalized_block_texture_size: f32,
     ) -> MeshData {
-        let mut mesh_data = MeshData::new();
+        let mut mesh = MeshData::new();
         for x in 0..Chunk::size() as u8 {
             for y in 0..Chunk::size() as u8 {
                 for z in 0..Chunk::size() as u8 {
                     let voxel_id = self.get_voxel_id(x, y, z);
-                    mesh_data.add_voxel(
+                    self.add_voxel(
+                        &mut mesh,
                         x,
                         y,
                         z,
                         voxel_id,
                         self.voxels,
+                        self.coord,
+                        world,
                         voxel_types,
                         texture_atlas_size_in_blocks,
                         normalized_block_texture_size,
@@ -230,7 +235,66 @@ impl Chunk {
                 }
             }
         }
-        mesh_data
+        self.mesh = mesh.clone();
+        mesh
+    }
+
+    pub(crate) fn add_voxel(
+        &mut self,
+        mesh: &mut MeshData,
+        x: u8,
+        y: u8,
+        z: u8,
+        voxel_id: u8,
+        ref voxel_map: [u8; Chunk::voxels_len() as usize],
+        chunk_coord: ChunkCoord,
+        world: &World,
+        ref voxel_types: &Vec<VoxelType>,
+        texture_atlas_size_in_blocks: u8,
+        normalized_block_texture_size: f32,
+    ) {
+        if voxel_id == 0 {
+            return;
+        }
+        let voxel: &VoxelType = voxel_types.get(voxel_id as usize).unwrap();
+
+        for face in &voxel.faces {
+            if face.direction != FaceDirection::Other {
+                let neighbour_voxel_id = self.get_neighbour_voxel_position(world, x, y, z, face.direction.clone()); //self.get_neighbour_voxel_id(chunk_coord, x, y, z, face.direction.clone());
+                /*let neighbour_voxel_id = if n_x == u8::MAX && n_y == u8::MAX && n_z == u8::MAX {
+                    0
+                } else {
+                    voxel_map[to_voxel_index(n_x, n_y, n_z) as usize]
+                };*/
+                let voxel: &VoxelType = voxel_types.get(neighbour_voxel_id as usize).unwrap();
+                if !voxel.should_draw(face.direction.reverse_face_direction()) {
+                    continue;
+                }
+            }
+            for i in 0..face.vertices.len() {
+                let position = *face.vertices.get(i).unwrap();
+                let uv = *face.uvs.get(i).unwrap();
+
+                let vertex_uv = calculate_uv(
+                    face.texture,
+                    uv,
+                    texture_atlas_size_in_blocks,
+                    normalized_block_texture_size,
+                );
+
+                let vertex_position = glm::vec3(
+                    x as f32 + position.x,
+                    y as f32 + position.y,
+                    z as f32 + position.z,
+                );
+                let vertex = Vertex::new(vertex_position, vertex_uv);
+                mesh.vertices.push(vertex);
+            }
+            for index in &face.indices {
+                mesh.indices.push(mesh.vertex_index + index);
+            }
+            mesh.vertex_index += face.vertices.len() as u32;
+        }
     }
 
     pub(crate) unsafe fn update_mesh(
@@ -286,52 +350,47 @@ impl Chunk {
     pub(crate) unsafe fn destroy(&self, device: &Device) {
         self.destroy_buffers(device);
     }
-}
 
-pub(crate) fn get_neighbour_voxel_position(x: u8, y: u8, z: u8, direction: FaceDirection) -> (u8, u8, u8) {
-    match direction {
-        FaceDirection::Back => {
-            if x == 0 {
-                /*Get id from world (voxel is in another chunk)*/
-                return (u8::MAX, u8::MAX, u8::MAX);
+    pub(crate) fn get_neighbour_voxel_position(&self, world: &World, x: u8, y: u8, z: u8, direction: FaceDirection) -> u8 {
+        match direction {
+            FaceDirection::Back => {
+                if x == 0 {
+                    return world.get_voxel_id(self.coord.add_x_to_new(-1), (Self::size() - 1) as u8, y, z);
+                }
+                self.get_voxel_id(x - 1, y, z)
             }
-            (x - 1, y, z)
-        }
-        FaceDirection::Front => {
-            if i32::from(x) == Chunk::size() - 1 {
-                /*Get id from world (voxel is in another chunk)*/
-                return (u8::MAX, u8::MAX, u8::MAX);
+            FaceDirection::Front => {
+                if i32::from(x) == Chunk::size() - 1 {
+                    return world.get_voxel_id(self.coord.add_x_to_new(1), 0, y, z);
+                }
+                self.get_voxel_id(x + 1, y, z)
             }
-            (x + 1, y, z)
-        }
-        FaceDirection::Left => {
-            if y == 0 {
-                /*Get id from world (voxel is in another chunk)*/
-                return (u8::MAX, u8::MAX, u8::MAX);
+            FaceDirection::Left => {
+                if y == 0 {
+                    return world.get_voxel_id(self.coord.add_y_to_new(-1), x, (Self::size() - 1) as u8, z);
+                }
+                self.get_voxel_id(x, y - 1, z)
             }
-            (x, y - 1, z)
-        }
-        FaceDirection::Right => {
-            if i32::from(y) == Chunk::size() - 1 {
-                /*Get id from world (voxel is in another chunk)*/
-                return (u8::MAX, u8::MAX, u8::MAX);
+            FaceDirection::Right => {
+                if i32::from(y) == Chunk::size() - 1 {
+                    return world.get_voxel_id(self.coord.add_y_to_new(1), x, 0, z);
+                }
+                self.get_voxel_id(x, y + 1, z)
             }
-            (x, y + 1, z)
-        }
-        FaceDirection::Bottom => {
-            if z == 0 {
-                /*Get id from world (voxel is in another chunk)*/
-                return (u8::MAX, u8::MAX, u8::MAX);
+            FaceDirection::Bottom => {
+                if z == 0 {
+                    return world.get_voxel_id(self.coord.add_z_to_new(-1), x, y, (Self::size() - 1) as u8);
+                }
+                self.get_voxel_id(x, y, z - 1)
             }
-            (x, y, z - 1)
-        }
-        FaceDirection::Top => {
-            if i32::from(z) == Chunk::size() - 1 {
-                /*Get id from world (voxel is in another chunk)*/
-                return (u8::MAX, u8::MAX, u8::MAX);
+            FaceDirection::Top => {
+                if i32::from(z) == Chunk::size() - 1 {
+                    return world.get_voxel_id(self.coord.add_z_to_new(1), x, y, 0);
+                }
+                self.get_voxel_id(x, y, z + 1)
             }
-            (x, y, z + 1)
+            //TODO: Fix maybe (not sure if its broken)
+            FaceDirection::Other => self.get_voxel_id(x, y, z),
         }
-        FaceDirection::Other => (x, y, z),
     }
 }

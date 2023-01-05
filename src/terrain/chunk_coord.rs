@@ -25,11 +25,70 @@ impl Hash for ChunkCoord {
 }
 
 impl ChunkCoord {
+    pub(crate) fn zero() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            z: 0,
+        }
+    }
+
     pub(crate) fn from_world_coords(x: i32, y: i32, z: i32) -> Self {
         Self {
             x: x / Chunk::size(),
             y: y / Chunk::size(),
             z: z / Chunk::size(),
+        }
+    }
+
+    pub(crate) fn add(&mut self, x: i32, y: i32, z: i32) {
+        self.x += x;
+        self.y += y;
+        self.z += z;
+    }
+
+    pub(crate) fn add_x(&mut self, x: i32) {
+        self.x += x;
+    }
+
+    pub(crate) fn add_y(&mut self, y: i32) {
+        self.y += y;
+    }
+
+    pub(crate) fn add_z(&mut self, z: i32) {
+        self.z += z;
+    }
+
+
+    pub(crate) fn add_to_new(&self, x: i32, y: i32, z: i32) -> Self {
+        Self {
+            x: self.x + x,
+            y: self.y + y,
+            z: self.z + z,
+        }
+    }
+
+    pub(crate) fn add_x_to_new(&self, x: i32) -> Self {
+        Self {
+            x: self.x + x,
+            y: self.y,
+            z: self.z,
+        }
+    }
+
+    pub(crate) fn add_y_to_new(&self, y: i32) -> Self {
+        Self {
+            x: self.x,
+            y: self.y + y,
+            z: self.z,
+        }
+    }
+
+    pub(crate) fn add_z_to_new(&self, z: i32) -> Self {
+        Self {
+            x: self.x,
+            y: self.y,
+            z: self.z + z,
         }
     }
 }

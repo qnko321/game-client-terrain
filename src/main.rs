@@ -29,10 +29,10 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowBuilder};
 
 use enigo::*;
+use log::info;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::prelude::v1_0::*;
-use vulkanalia::vk::{CommandBuffer, ExtDebugUtilsExtension};
-use vulkanalia::vk::KhrSurfaceExtension;
+use vulkanalia::vk::{ExtDebugUtilsExtension, KhrSurfaceExtension};
 use vulkanalia::vk::KhrSwapchainExtension;
 use vulkanalia::window as vk_window;
 
@@ -69,6 +69,11 @@ const DEVICE_EXTENSIONS: &[vk::ExtensionName] = &[vk::KHR_SWAPCHAIN_EXTENSION.na
 
 //The maximum number of frames that can be processed concurrently.
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
+
+const LOW_DELTA_TIME_LIMIT: f64 = 0.0005;
+
+const HIGH_DELTA_TIME_LIMIT: f64 = 0.4;
+
 
 #[rustfmt::skip]
 fn main() -> Result<()> {
@@ -135,11 +140,16 @@ struct App {
     frame: usize,
     resized: bool,
     start: Instant,
-    is_focused: bool,
     input_manager: InputManager,
+
+    // Game State
+    is_focused: bool,
+    is_playing: bool,
+
     // Delta Time
     delta_time: f32,
-    last_frame_time: f64,
+    last_time: Instant,
+
     is_first_frame: bool,
     frame_count: u128,
     player_data: PlayerData,
@@ -187,11 +197,13 @@ impl App {
         create_sync_objects(&device, &mut data)?;
 
         let mut player_data = PlayerData::default();
+        player_data.is_grounded = false;
+        player_data.velocity = glm::vec3(0.0, 0.0, 0.0);
         player_data.horizontal_angle = 1.57;
-        player_data.transform.position = glm::Vec3::new(0.0, 0.0, 20.0);
+        player_data.transform.position = glm::Vec3::new(0.0, 0.0, 50.0);
         player_data.vertical_angle = 3.14;
-        player_data.mouse_speed = 2.0;
-        player_data.move_speed = 15.0;
+        player_data.mouse_speed = 5.0;
+        player_data.move_speed = 10.0;
 
         Ok(Self {
             entry,
@@ -203,9 +215,10 @@ impl App {
             frame: 0,
             resized: false,
             start: Instant::now(),
-            last_frame_time: 0.0,
             delta_time: 0.0,
+            last_time: Instant::now(),
             is_focused: true,
+            is_playing: true,
             is_first_frame: true,
             frame_count: 0,
             player_data
@@ -221,15 +234,18 @@ impl App {
             .wait_for_fences(&[in_flight_fence], true, u64::MAX)?;
 
         // Handle Delta time
-        let time_since_start = self.start.elapsed().as_secs_f64();
-        self.delta_time = (time_since_start - self.last_frame_time) as f32;
-        self.last_frame_time = time_since_start;
-
+        let current_time = Instant::now();
+        let delta_time_duration = current_time - self.last_time;
+        let mut delta_time_in_seconds = delta_time_duration.as_secs_f64();
+        if delta_time_in_seconds < LOW_DELTA_TIME_LIMIT {
+            delta_time_in_seconds = LOW_DELTA_TIME_LIMIT;
+        } else if delta_time_in_seconds > HIGH_DELTA_TIME_LIMIT {
+            delta_time_in_seconds = HIGH_DELTA_TIME_LIMIT;
+        }
+        self.last_time = current_time;
+        self.delta_time = delta_time_in_seconds as f32;
 
         self.frame_count += 1;
-        /*OLD let current_frame_time = Instant::now();
-        self.delta_time = self.last_frame_time.elapsed().as_secs_f32();
-        self.last_frame_time = current_frame_time;*/
 
         let result = self.device.acquire_next_image_khr(
             self.data.swapchain,
@@ -289,39 +305,116 @@ impl App {
             return Err(anyhow!(e));
         }
 
-        if self.is_focused {
-            if !self.is_first_frame {
-                let window_inner = window.inner_position()?;
-                let mouse_location: (i32, i32) = Enigo::mouse_location();
-                let x_offset = window_inner.x + self.data.swapchain_extent.width as i32 / 2_i32
-                    - mouse_location.0
-                    - 1;
-                let y_offset = window_inner.y + self.data.swapchain_extent.height as i32 / 2_i32
-                    - mouse_location.1
-                    - 1;
-                let x_offset = -x_offset;
-                let y_offset = -y_offset;
+        // Gravity
+        self.player_data.velocity.z -= 9.81 * self.delta_time;
 
-                self.player_data.horizontal_angle += self.delta_time
-                    * self.player_data.mouse_speed
-                    * x_offset as f32;
-                self.player_data.vertical_angle += self.delta_time
-                    * self.player_data.mouse_speed
-                    * y_offset as f32;
-
-                self.player_data.vertical_angle = glm::clamp_scalar(self.player_data.vertical_angle, 0.0, 6.28);
-            } else {
-                self.is_first_frame = false;
-            }
-
-            let window_inner = window.inner_position()?;
-            let center_of_window_x =
-                window_inner.x + self.data.swapchain_extent.width as i32 / 2_i32;
-            let center_of_window_y =
-                window_inner.y + self.data.swapchain_extent.height as i32 / 2_i32;
-            Enigo.mouse_move_to(center_of_window_x, center_of_window_y);
+        if self.player_data.is_grounded {
+            self.player_data.velocity.z = 0.0;
         }
 
+        self.player_data.transform.position.z += self.player_data.velocity.z * self.delta_time;
+
+        // Input
+        self.handle_camera_rotation(window)?;
+        self.handle_movement();
+        if self.input_manager.get_key_down(VirtualKeyCode::F11) {
+            self.toggle_fullscreen(window);
+        }
+        if self.input_manager.get_key_down(VirtualKeyCode::Space) {
+            self.player_data.is_grounded = !self.player_data.is_grounded;
+        }
+
+        // Terrain
+        self.world.update_view_distance(
+            self.player_data.transform.position.x as i32,
+            self.player_data.transform.position.y as i32,
+            self.player_data.transform.position.z as i32,
+            &self.instance,
+            &self.device,
+            &mut self.data,
+        )?;
+
+        self.input_manager.detect_new_frame();
+
+        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+        Ok(())
+    }
+
+    #[rustfmt::skip]
+    fn center_cursor(window: &Window, swapchain_extent: &vk::Extent2D) -> Result<()> {
+        let window_inner = window.inner_position()?;
+        let center_of_window_x =
+            window_inner.x + swapchain_extent.width as i32 / 2_i32;
+        let center_of_window_y =
+            window_inner.y + swapchain_extent.height as i32 / 2_i32;
+        Enigo.mouse_move_to(center_of_window_x, center_of_window_y);
+
+        Ok(())
+    }
+
+    #[rustfmt::skip]
+    fn get_mouse_delta(window: &Window, swapchain_extent: &vk::Extent2D) -> Result<(i32,i32)> {
+        let window_inner = window.inner_position()?;
+        let mouse_location: (i32, i32) = Enigo::mouse_location();
+        let x_offset = window_inner.x + swapchain_extent.width as i32 / 2_i32
+            - mouse_location.0
+            - 1;
+        let y_offset = window_inner.y + swapchain_extent.height as i32 / 2_i32
+            - mouse_location.1
+            - 1;
+
+        Ok((-x_offset, -y_offset))
+    }
+
+    #[rustfmt::skip]
+    fn toggle_fullscreen(&mut self, window: &Window) {
+        if window.fullscreen().is_some() {
+            window.set_fullscreen(None);
+        } else {
+            window.current_monitor().map(|monitor| {
+                monitor.video_modes().next().map(|video_mode| {
+                    if cfg!(any(target_os = "macos", unix)) {
+                        window.set_fullscreen(Some(Fullscreen::Borderless(Some(monitor))));
+                    } else {
+                        window.set_fullscreen(Some(Fullscreen::Exclusive(video_mode)));
+                    }
+                })
+            });
+        }
+        self.resized = true;
+        self.is_first_frame = true;
+    }
+
+    #[rustfmt::skip]
+    fn handle_camera_rotation(&mut self, window: &Window) -> Result<()> {
+        if self.is_focused {
+            if self.is_playing {
+                if self.is_first_frame {
+                    Self::center_cursor(window, &self.data.swapchain_extent)?;
+                    self.is_first_frame = false;
+                } else {
+                    let (x_offset, y_offset) = Self::get_mouse_delta(window, &self.data.swapchain_extent)?;
+
+                    self.player_data.horizontal_angle += self.delta_time
+                        * self.player_data.mouse_speed
+                        * x_offset as f32;
+                    self.player_data.vertical_angle += self.delta_time
+                        * self.player_data.mouse_speed
+                        * y_offset as f32;
+
+                    self.player_data.vertical_angle = glm::clamp_scalar(self.player_data.vertical_angle, 0.0 + 1.57, 6.28 - 1.57);
+
+                    Self::center_cursor(window, &self.data.swapchain_extent)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[rustfmt::skip]
+    fn handle_movement(&mut self) {
         if self.input_manager.get_key(VirtualKeyCode::W) {
             let mut forward = self.player_data.forward();
             //forward.z = 0.0;
@@ -340,39 +433,6 @@ impl App {
             let left = -self.player_data.right();
             self.player_data.walk(left, self.delta_time);
         }
-
-        if self.input_manager.get_key_down(VirtualKeyCode::F11) {
-            if window.fullscreen().is_some() {
-                window.set_fullscreen(None);
-            } else {
-                window.current_monitor().map(|monitor| {
-                    monitor.video_modes().next().map(|video_mode| {
-                        if cfg!(any(target_os = "macos", unix)) {
-                            window.set_fullscreen(Some(Fullscreen::Borderless(Some(monitor))));
-                        } else {
-                            window.set_fullscreen(Some(Fullscreen::Exclusive(video_mode)));
-                        }
-                    })
-                });
-            }
-            self.resized = true;
-            self.is_first_frame = true;
-        }
-
-        self.world.update_view_distance(
-            self.player_data.transform.position.x as i32,
-            self.player_data.transform.position.y as i32,
-            self.player_data.transform.position.z as i32,
-            &self.instance,
-            &self.device,
-            &mut self.data,
-        )?;
-
-        self.input_manager.detect_new_frame();
-
-        self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
-
-        Ok(())
     }
 
     #[rustfmt::skip]
@@ -524,7 +584,7 @@ impl App {
             })
             .collect::<Result<Vec<_>, _>>()?;*/
 
-        let mut secondary_command_buffers = Vec::<CommandBuffer>::new();
+        let mut secondary_command_buffers = Vec::<vk::CommandBuffer>::new();
         for chunk_index in 0..self.world.chunks_len() {
             match self.update_secondary_command_buffer(image_index, chunk_index) {
                 Ok(buffer) => secondary_command_buffers.push(buffer),

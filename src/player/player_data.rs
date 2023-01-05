@@ -8,7 +8,11 @@ pub(crate) struct PlayerData {
     pub(crate) horizontal_angle: f32,
     pub(crate) vertical_angle: f32,
     pub(crate) mouse_speed: f32,
+
+    // Movement
     pub(crate) move_speed: f32,
+    pub(crate) velocity: glm::Vec3,
+    pub(crate) is_grounded: bool,
 }
 
 impl PlayerData {

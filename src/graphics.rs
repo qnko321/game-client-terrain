@@ -20,3 +20,4 @@ pub mod sync_objects;
 pub mod textures;
 pub mod uniform_buffer_object;
 pub mod vertex;
+pub mod texturing_shared;
