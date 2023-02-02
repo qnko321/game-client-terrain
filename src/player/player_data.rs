@@ -1,9 +1,11 @@
 use crate::core::transform::Transform;
 use nalgebra_glm as glm;
+use crate::core::collider::Collider;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PlayerData {
     pub(crate) transform: Transform,
+    pub(crate) collider: Collider,
     // Camera
     pub(crate) horizontal_angle: f32,
     pub(crate) vertical_angle: f32,
@@ -16,6 +18,13 @@ pub(crate) struct PlayerData {
 }
 
 impl PlayerData {
+    pub(crate) fn get_collider(&self) -> Collider {
+        self.collider.compensate_position(self.transform.position)
+    }
+
+
+
+
     pub(crate) fn add_horizontal_angle(&mut self, add: f32) {
         self.horizontal_angle += add;
     }

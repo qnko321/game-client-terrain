@@ -24,11 +24,11 @@ use anyhow::{anyhow, Result};
 use nalgebra_glm as glm;
 
 use winit::dpi::LogicalSize;
-use winit::event::{Event, VirtualKeyCode, WindowEvent};
+use winit::event::{Event, ModifiersState, MouseButton, VirtualKeyCode, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Fullscreen, Window, WindowBuilder};
 
-use enigo::*;
+use enigo::{Enigo, MouseControllable};
 use log::info;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::prelude::v1_0::*;
@@ -36,7 +36,10 @@ use vulkanalia::vk::{ExtDebugUtilsExtension, KhrSurfaceExtension};
 use vulkanalia::vk::KhrSwapchainExtension;
 use vulkanalia::window as vk_window;
 
-use crate::controlls::input_manager::InputManager;
+use crate::controlls::input_manager::{InputManager, ScrollWheelDelta};
+use crate::core::collider::Collider;
+use crate::core::collision::intersects;
+use crate::core::game_object::GameObject;
 use crate::graphics::buffers::{create_uniform_buffers};
 use crate::graphics::command_buffers::create_command_buffers;
 use crate::graphics::command_pool::create_command_pools;
@@ -74,11 +77,16 @@ const LOW_DELTA_TIME_LIMIT: f64 = 0.0005;
 
 const HIGH_DELTA_TIME_LIMIT: f64 = 0.4;
 
+struct TestObject {
+
+}
+
+impl dyn GameObject {
+
+}
 
 #[rustfmt::skip]
 fn main() -> Result<()> {
-    let path = Path::new("log.txt");
-    File::create(path).expect("Unable to create log.txt file!");
 
     pretty_env_logger::init();
 
@@ -90,6 +98,8 @@ fn main() -> Result<()> {
         .build(&event_loop)?;
 
     // App
+
+    //let mut game_objects: Vec<Box<dyn GameObject>> = vec![];
 
     let mut app = unsafe { App::create(&window)? };
     let mut destroying = false;
@@ -115,21 +125,33 @@ fn main() -> Result<()> {
                 unsafe { app.destroy(); }
             }
             Event::WindowEvent { event: WindowEvent::Focused(focused), .. } => {
-                app.set_focused(focused);
-                window.set_cursor_visible(!focused);
+                /*app.set_focused(focused);
+                window.set_cursor_visible(!focused);*/
             },
             Event::WindowEvent { event: WindowEvent::KeyboardInput {device_id, input, is_synthetic}, .. } => {
-                if app.input_manager.detect_change(device_id, input, is_synthetic, app.frame_count).is_err() {
-                    app.set_focused(false);
+                if app.input_manager.detect_keyboard(device_id, input, is_synthetic, app.frame_count).is_err() {
+                    app.unlock_cursor();
                     window.set_cursor_visible(true);
                 }
             },
+            Event::WindowEvent { event: WindowEvent::MouseInput {state, button, device_id, ..}, ..} => {
+                app.input_manager.detect_mouse(device_id, button, state, app.frame_count);
+            },
+            Event::WindowEvent { event: WindowEvent::MouseWheel {device_id, delta, phase, ..}, ..} => {
+                app.input_manager.detect_wheel(device_id, delta, phase, app.frame_count);
+
+            },
+            Event::WindowEvent { event: WindowEvent::CursorLeft {device_id}, ..} => {
+                app.is_hovered_by_cursor = false;
+            }
+            Event::WindowEvent { event: WindowEvent::CursorEntered {device_id}, ..} => {
+                app.is_hovered_by_cursor = true;
+            }
             _ => {}
         }
     });
 }
 
-// Our Vulkan app.
 #[derive(Clone, Debug)]
 struct App {
     entry: Entry,
@@ -142,8 +164,10 @@ struct App {
     start: Instant,
     input_manager: InputManager,
 
+    is_hovered_by_cursor: bool,
+
     // Game State
-    is_focused: bool,
+    is_cursor_locked: bool,
     is_playing: bool,
 
     // Delta Time
@@ -176,7 +200,7 @@ impl App {
         create_texture_image(&instance, &device, &mut data, "resources/blocks.png")?;
         create_texture_image_view(&device, &mut data)?;
         create_texture_sampler(&device, &mut data)?;
-        //load_model(&mut data, "resources/viking_room.obj")?;
+        /*//load_model(&mut data, "resources/viking_room.obj")?;
 
         /*let mut chunk_renderer = ChunkRenderData::new(0, 0, 0);
         let mut chunk = Chunk::new(0, 0, 0);
@@ -187,7 +211,7 @@ impl App {
 
         //generate_world(&mut data);
         //create_vertex_buffer(&instance, &device, &mut data)?;
-        //create_index_buffer(&instance, &device, &mut data)?;
+        //create_index_buffer(&instance, &device, &mut data)?;*/
         let mut world = World::new();
         world.load_spawn(&instance, &device, &mut data)?;
         create_uniform_buffers(&instance, &device, &mut data)?;
@@ -197,13 +221,25 @@ impl App {
         create_sync_objects(&device, &mut data)?;
 
         let mut player_data = PlayerData::default();
-        player_data.is_grounded = false;
+        player_data.is_grounded = true;
         player_data.velocity = glm::vec3(0.0, 0.0, 0.0);
         player_data.horizontal_angle = 1.57;
         player_data.transform.position = glm::Vec3::new(0.0, 0.0, 50.0);
         player_data.vertical_angle = 3.14;
         player_data.mouse_speed = 5.0;
         player_data.move_speed = 10.0;
+        player_data.collider = Collider {
+            vertices: vec![
+                glm::vec3(0.0, 0.0, 0.0),
+                glm::vec3(1.0, 0.0, 0.0),
+                glm::vec3(1.0, 1.0, 0.0),
+                glm::vec3(0.0, 1.0, 0.0),
+                glm::vec3(0.0, 0.0, 1.0),
+                glm::vec3(1.0, 0.0, 1.0),
+                glm::vec3(1.0, 1.0, 1.0),
+                glm::vec3(0.0, 1.0, 1.0),
+            ],
+        };
 
         Ok(Self {
             entry,
@@ -217,7 +253,8 @@ impl App {
             start: Instant::now(),
             delta_time: 0.0,
             last_time: Instant::now(),
-            is_focused: true,
+            is_hovered_by_cursor: false,
+            is_cursor_locked: false,
             is_playing: true,
             is_first_frame: true,
             frame_count: 0,
@@ -305,7 +342,26 @@ impl App {
             return Err(anyhow!(e));
         }
 
+
+        let test_collider = Collider {
+            vertices: vec![
+                glm::vec3(-10.0, -10.0, 0.0),
+                glm::vec3(-10.0, 10.0, 0.0),
+                glm::vec3(10.0, 10.0, 0.0),
+                glm::vec3(10.0, -10.0, 0.0),
+                glm::vec3(-10.0, -10.0, 15.0),
+                glm::vec3(-10.0, 10.0, 15.0),
+                glm::vec3(10.0, 10.0, 15.0),
+                glm::vec3(10.0, -10.0, 15.0),
+            ]
+        };
+
+        if intersects(&self.player_data.get_collider(), &test_collider) {
+            self.player_data.is_grounded = true;
+        }
+
         // Gravity
+        //self.world.get_chunk_by_world_coords(self.player_data.transform.x, self.player_data.transform.x, self.player_data.transform.y, self.player_data.transform.z);
         self.player_data.velocity.z -= 9.81 * self.delta_time;
 
         if self.player_data.is_grounded {
@@ -313,6 +369,19 @@ impl App {
         }
 
         self.player_data.transform.position.z += self.player_data.velocity.z * self.delta_time;
+
+        if self.is_hovered_by_cursor
+            && !self.is_cursor_locked
+            && (self.input_manager.get_key_down_mouse(MouseButton::Left) || self.input_manager.get_key_down_mouse(MouseButton::Right))
+        {
+            self.lock_cursor();
+            window.set_cursor_visible(false);
+        }
+
+        if self.input_manager.get_key_down(VirtualKeyCode::Escape) {
+            self.unlock_cursor();
+            window.set_cursor_visible(true);
+        }
 
         // Input
         self.handle_camera_rotation(window)?;
@@ -324,6 +393,7 @@ impl App {
             self.player_data.is_grounded = !self.player_data.is_grounded;
         }
 
+
         // Terrain
         self.world.update_view_distance(
             self.player_data.transform.position.x as i32,
@@ -334,7 +404,7 @@ impl App {
             &mut self.data,
         )?;
 
-        self.input_manager.detect_new_frame();
+        self.input_manager.detected_new_frame();
 
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
@@ -388,7 +458,7 @@ impl App {
 
     #[rustfmt::skip]
     fn handle_camera_rotation(&mut self, window: &Window) -> Result<()> {
-        if self.is_focused {
+        if self.is_cursor_locked {
             if self.is_playing {
                 if self.is_first_frame {
                     Self::center_cursor(window, &self.data.swapchain_extent)?;
@@ -718,9 +788,13 @@ impl App {
         self.device.destroy_swapchain_khr(self.data.swapchain, None);
     }
 
-    #[rustfmt::skip]
-    fn set_focused(&mut self, focused: bool) {
-        self.is_focused = focused;
+    fn lock_cursor(&mut self) {
+        self.is_cursor_locked = true;
+        self.is_first_frame = true;
+    }
+
+    fn unlock_cursor(&mut self) {
+        self.is_cursor_locked = false;
         self.is_first_frame = true;
     }
 }

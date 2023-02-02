@@ -196,6 +196,10 @@ impl World {
         Err(anyhow!("No chunk at index: {}", index))
     }
 
+    /*pub(crate) fn get_chunk_by_world_coords(&self, ) -> Option<&Chunk> {
+        //self.chunks.get(&coord)
+    }*/
+
     pub(crate) fn get_voxel_id(&self, chunk_coord: ChunkCoord, voxel_x: u8, voxel_y: u8, voxel_z: u8) -> u8 {
         let chunk = self.chunks.get(&chunk_coord);
         return match chunk {
