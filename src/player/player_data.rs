@@ -1,6 +1,11 @@
+use std::any::Any;
 use crate::core::transform::Transform;
 use nalgebra_glm as glm;
+use winit::event::VirtualKeyCode;
 use crate::core::collider::Collider;
+use crate::core::game_object::GameObject;
+use crate::FrameData;
+use crate::terrain::mesh_data::MeshData;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PlayerData {
@@ -17,14 +22,34 @@ pub(crate) struct PlayerData {
     pub(crate) is_grounded: bool,
 }
 
-impl PlayerData {
-    pub(crate) fn get_collider(&self) -> Collider {
+impl GameObject for PlayerData {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn get_mesh(&self) -> MeshData {
+        MeshData::default()
+    }
+
+    fn get_collider(&self) -> Collider {
         self.collider.compensate_position(self.transform.position)
     }
 
+    fn start(&mut self, data: FrameData) {
 
+    }
 
+    fn update(&mut self, data: FrameData) {
+        self.handle_camera(&data);
+        self.handle_movement(&data);
+    }
+}
 
+impl PlayerData {
     pub(crate) fn add_horizontal_angle(&mut self, add: f32) {
         self.horizontal_angle += add;
     }
@@ -54,45 +79,38 @@ impl PlayerData {
             0.0,
         )
     }
+
+    fn handle_camera(&mut self, data: &FrameData) {
+        let (x_offset, y_offset) = data.input_manager.get_mouse_delta();
+
+        self.horizontal_angle += data.delta_time
+            * self.mouse_speed
+            * x_offset as f32;
+        self.vertical_angle += data.delta_time
+            * self.mouse_speed
+            * y_offset as f32;
+
+        self.vertical_angle = glm::clamp_scalar(self.vertical_angle, 0.0 + 1.57, 6.28 - 1.57);
+    }
+
+    fn handle_movement(&mut self, data: &FrameData) {
+        if data.input_manager.get_key(VirtualKeyCode::W) {
+            let mut forward = self.forward();
+            //forward.z = 0.0;
+            self.walk(forward, data.delta_time);
+        }
+        if data.input_manager.get_key(VirtualKeyCode::S) {
+            let mut backward = -self.forward();
+            //backward.z = 0.0;
+            self.walk(backward, data.delta_time);
+        }
+        if data.input_manager.get_key(VirtualKeyCode::D) {
+            let right = self.right();
+            self.walk(right, data.delta_time);
+        }
+        if data.input_manager.get_key(VirtualKeyCode::A) {
+            let left = -self.right();
+            self.walk(left, data.delta_time);
+        }
+    }
 }
-/*
-impl GameObject for PlayerData {
-    fn create() -> Self {
-        Self {
-            transform: Transform {
-                position: glm::Vec3::new(0.0, 0.0, 0.0),
-                rotation: glm::Vec3::new(0.0, 0.0, 0.0),
-                scale: glm::Vec3::new(0.0, 0.0, 0.0),
-            },
-            mouse_speed: 2.0,
-            move_speed: 10.0,
-            horizontal_angle: 0.0,
-            vertical_angle: 0.0,
-        }
-    }
-
-    fn start(&mut self, app: &mut App) {
-
-    }
-
-    fn update(&mut self, app: &mut App) {
-        if app.input_manager.get_key(VirtualKeyCode::W) {
-            let mut forward = self.transform.forward();
-            forward.z = 0.0;
-            self.walk(forward, app.delta_time);
-        }
-        if app.input_manager.get_key(VirtualKeyCode::S) {
-            let mut backward = -self.transform.forward();
-            backward.z = 0.0;
-            self.walk(backward, app.delta_time);
-        }
-        if app.input_manager.get_key(VirtualKeyCode::D) {
-            let right = self.transform.right();
-            self.walk(right, app.delta_time);
-        }
-        if app.input_manager.get_key(VirtualKeyCode::A) {
-            let left = -self.transform.right();
-            self.walk(left, app.delta_time);
-        }
-    }
-}*/

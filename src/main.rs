@@ -13,6 +13,7 @@ mod graphics;
 mod player;
 mod terrain;
 
+use std::any::Any;
 use std::fs::{File};
 use std::mem::size_of;
 use std::path::Path;
@@ -30,6 +31,7 @@ use winit::window::{Fullscreen, Window, WindowBuilder};
 
 use enigo::{Enigo, MouseControllable};
 use log::info;
+use tobj::Mesh;
 use vulkanalia::loader::{LibloadingLoader, LIBRARY};
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::{ExtDebugUtilsExtension, KhrSurfaceExtension};
@@ -59,6 +61,7 @@ use crate::graphics::textures::{
 use crate::graphics::uniform_buffer_object::UniformBufferObject;
 use crate::graphics::vertex::Vertex;
 use crate::player::player_data::PlayerData;
+use crate::terrain::mesh_data::MeshData;
 use crate::terrain::world::{World};
 
 //Whether the validation layers should be enabled.
@@ -77,12 +80,11 @@ const LOW_DELTA_TIME_LIMIT: f64 = 0.0005;
 
 const HIGH_DELTA_TIME_LIMIT: f64 = 0.4;
 
-struct TestObject {
-
-}
-
-impl dyn GameObject {
-
+#[derive(Clone)]
+pub(crate) struct FrameData<'a> {
+    pub(crate) delta_time: f32,
+    pub(crate) frame_count: u128,
+    pub(crate) input_manager: &'a InputManager,
 }
 
 #[rustfmt::skip]
@@ -99,16 +101,17 @@ fn main() -> Result<()> {
 
     // App
 
-    //let mut game_objects: Vec<Box<dyn GameObject>> = vec![];
+    let mut game_objects: Vec<Box<dyn GameObject>> = vec![];
+    let mut new_objects: Vec<usize> = vec![];
 
-    let mut app = unsafe { App::create(&window)? };
+    let mut app = unsafe { App::create(&window, &mut game_objects, &mut new_objects)? };
     let mut destroying = false;
     let mut minimized = false;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
             // Render a frame if our Vulkan app is not being destroyed.
-            Event::MainEventsCleared if !destroying && !minimized => unsafe { app.render(&window) }.unwrap(),
+            Event::MainEventsCleared if !destroying && !minimized => unsafe { app.render(&window, &mut game_objects, &mut new_objects) }.unwrap(),
             // Mark the window as having been resized.
             Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
                 if size.width == 0 || size.height == 0 {
@@ -164,6 +167,7 @@ struct App {
     start: Instant,
     input_manager: InputManager,
 
+    // State
     is_hovered_by_cursor: bool,
 
     // Game State
@@ -176,12 +180,11 @@ struct App {
 
     is_first_frame: bool,
     frame_count: u128,
-    player_data: PlayerData,
 }
 
 impl App {
     #[rustfmt::skip]
-    unsafe fn create(window: &Window) -> Result<Self> {
+    unsafe fn create(window: &Window, game_objects: &mut Vec<Box<dyn GameObject>>, new_objects: &mut Vec<usize>) -> Result<Self> {
         let loader = LibloadingLoader::new(LIBRARY)?;
         let entry = Entry::new(loader).map_err(|b| anyhow!("{}", b))?;
         let mut data = AppData::default();
@@ -241,6 +244,9 @@ impl App {
             ],
         };
 
+        new_objects.push(game_objects.len());
+        game_objects.push(Box::new(player_data));
+
         Ok(Self {
             entry,
             instance,
@@ -258,12 +264,11 @@ impl App {
             is_playing: true,
             is_first_frame: true,
             frame_count: 0,
-            player_data
         })
     }
 
     #[rustfmt::skip]
-    unsafe fn render(&mut self, window: &Window) -> Result<()> {
+    unsafe fn render(&mut self, window: &Window, game_objects: &mut Vec<Box<dyn GameObject>>, new_objects: &mut Vec<usize>) -> Result<()> {
         let in_flight_fence = self.data.in_flight_fences[self.frame];
 
         // Wait for the last frame to finish
@@ -306,7 +311,10 @@ impl App {
         self.data.images_in_flight[image_index] = in_flight_fence;
 
         self.update_command_buffer(image_index)?;
-        self.update_uniform_buffer(image_index)?;
+        let first = game_objects.get_mut(0).unwrap();
+        let second = first.as_any_mut();
+        let third = second.downcast_mut::<PlayerData>().unwrap();
+        self.update_uniform_buffer(third, image_index)?;
 
         let wait_semaphores = &[self.data.image_available_semaphores[self.frame]];
         let wait_stages = &[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -356,19 +364,41 @@ impl App {
             ]
         };
 
-        if intersects(&self.player_data.get_collider(), &test_collider) {
-            self.player_data.is_grounded = true;
+        {
+            let player = game_objects.get_mut(0).unwrap().as_any_mut().downcast_mut::<PlayerData>().unwrap();
+
+            if intersects(&player.get_collider(), &test_collider) {
+                player.is_grounded = true;
+            }
+
+            // Gravity
+            //self.world.get_chunk_by_world_coords(self.player_data.transform.x, self.player_data.transform.x, self.player_data.transform.y, self.player_data.transform.z);
+            player.velocity.z -= 9.81 * self.delta_time;
+
+            if player.is_grounded {
+                player.velocity.z = 0.0;
+            }
+
+            player.transform.position.z += player.velocity.z * self.delta_time;
         }
 
-        // Gravity
-        //self.world.get_chunk_by_world_coords(self.player_data.transform.x, self.player_data.transform.x, self.player_data.transform.y, self.player_data.transform.z);
-        self.player_data.velocity.z -= 9.81 * self.delta_time;
+        let frame_data = FrameData {
+            frame_count: self.frame_count,
+            delta_time: self.delta_time,
+            input_manager: &self.input_manager,
+        };
 
-        if self.player_data.is_grounded {
-            self.player_data.velocity.z = 0.0;
-        }
+        // Call start on new objects
+        new_objects.iter().for_each(|index| {
+            let object_index = new_objects.get(*index).unwrap();
+            game_objects.get_mut(*object_index).unwrap().start(frame_data.clone());
+        });
+        new_objects.clear();
 
-        self.player_data.transform.position.z += self.player_data.velocity.z * self.delta_time;
+        // Call update on all objects
+        game_objects.iter_mut().for_each(|mut obj| {
+            obj.update(frame_data.clone());
+        });
 
         if self.is_hovered_by_cursor
             && !self.is_cursor_locked
@@ -384,21 +414,22 @@ impl App {
         }
 
         // Input
-        self.handle_camera_rotation(window)?;
-        self.handle_movement();
+        self.input_manager.handle_mouse(window, self.is_cursor_locked).expect("Couldn't handle mouse delta input");
+
         if self.input_manager.get_key_down(VirtualKeyCode::F11) {
             self.toggle_fullscreen(window);
         }
         if self.input_manager.get_key_down(VirtualKeyCode::Space) {
-            self.player_data.is_grounded = !self.player_data.is_grounded;
+            game_objects.get_mut(0).unwrap().as_any_mut().downcast_mut::<PlayerData>().unwrap().is_grounded = !game_objects.get(0).unwrap().as_any().downcast_ref::<PlayerData>().unwrap().is_grounded;
         }
 
+        let player_pos = game_objects.get(0).unwrap().as_any().downcast_ref::<PlayerData>().unwrap().transform.position;
 
         // Terrain
         self.world.update_view_distance(
-            self.player_data.transform.position.x as i32,
-            self.player_data.transform.position.y as i32,
-            self.player_data.transform.position.z as i32,
+            player_pos.x as i32,
+            player_pos.y as i32,
+            player_pos.z as i32,
             &self.instance,
             &self.device,
             &mut self.data,
@@ -409,32 +440,6 @@ impl App {
         self.frame = (self.frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
         Ok(())
-    }
-
-    #[rustfmt::skip]
-    fn center_cursor(window: &Window, swapchain_extent: &vk::Extent2D) -> Result<()> {
-        let window_inner = window.inner_position()?;
-        let center_of_window_x =
-            window_inner.x + swapchain_extent.width as i32 / 2_i32;
-        let center_of_window_y =
-            window_inner.y + swapchain_extent.height as i32 / 2_i32;
-        Enigo.mouse_move_to(center_of_window_x, center_of_window_y);
-
-        Ok(())
-    }
-
-    #[rustfmt::skip]
-    fn get_mouse_delta(window: &Window, swapchain_extent: &vk::Extent2D) -> Result<(i32,i32)> {
-        let window_inner = window.inner_position()?;
-        let mouse_location: (i32, i32) = Enigo::mouse_location();
-        let x_offset = window_inner.x + swapchain_extent.width as i32 / 2_i32
-            - mouse_location.0
-            - 1;
-        let y_offset = window_inner.y + swapchain_extent.height as i32 / 2_i32
-            - mouse_location.1
-            - 1;
-
-        Ok((-x_offset, -y_offset))
     }
 
     #[rustfmt::skip]
@@ -456,26 +461,22 @@ impl App {
         self.is_first_frame = true;
     }
 
-    #[rustfmt::skip]
-    fn handle_camera_rotation(&mut self, window: &Window) -> Result<()> {
+    fn handle_camera_rotation(&mut self, player: &mut PlayerData, window: &Window) -> Result<()> {
         if self.is_cursor_locked {
             if self.is_playing {
                 if self.is_first_frame {
-                    Self::center_cursor(window, &self.data.swapchain_extent)?;
                     self.is_first_frame = false;
                 } else {
-                    let (x_offset, y_offset) = Self::get_mouse_delta(window, &self.data.swapchain_extent)?;
+                    let (x_offset, y_offset) = self.input_manager.get_mouse_delta();//Self::get_mouse_delta(window, &self.data.swapchain_extent)?;
 
-                    self.player_data.horizontal_angle += self.delta_time
-                        * self.player_data.mouse_speed
+                    player.horizontal_angle += self.delta_time
+                        * player.mouse_speed
                         * x_offset as f32;
-                    self.player_data.vertical_angle += self.delta_time
-                        * self.player_data.mouse_speed
+                    player.vertical_angle += self.delta_time
+                        * player.mouse_speed
                         * y_offset as f32;
 
-                    self.player_data.vertical_angle = glm::clamp_scalar(self.player_data.vertical_angle, 0.0 + 1.57, 6.28 - 1.57);
-
-                    Self::center_cursor(window, &self.data.swapchain_extent)?;
+                    player.vertical_angle = glm::clamp_scalar(player.vertical_angle, 0.0 + 1.57, 6.28 - 1.57);
                 }
             }
         }
@@ -484,25 +485,8 @@ impl App {
     }
 
     #[rustfmt::skip]
-    fn handle_movement(&mut self) {
-        if self.input_manager.get_key(VirtualKeyCode::W) {
-            let mut forward = self.player_data.forward();
-            //forward.z = 0.0;
-            self.player_data.walk(forward, self.delta_time);
-        }
-        if self.input_manager.get_key(VirtualKeyCode::S) {
-            let mut backward = -self.player_data.forward();
-            //backward.z = 0.0;
-            self.player_data.walk(backward, self.delta_time);
-        }
-        if self.input_manager.get_key(VirtualKeyCode::D) {
-            let right = self.player_data.right();
-            self.player_data.walk(right, self.delta_time);
-        }
-        if self.input_manager.get_key(VirtualKeyCode::A) {
-            let left = -self.player_data.right();
-            self.player_data.walk(left, self.delta_time);
-        }
+    fn handle_movement(&mut self, player: &mut PlayerData) {
+
     }
 
     #[rustfmt::skip]
@@ -672,30 +656,30 @@ impl App {
     }
 
     #[rustfmt::skip]
-    unsafe fn update_uniform_buffer(&self, image_index: usize) -> Result<()> {
+    unsafe fn update_uniform_buffer(&self, player: &mut PlayerData, image_index: usize) -> Result<()> {
         // MVP
 
         let look_direction = glm::vec3(
-            (self.player_data.vertical_angle.cos() * self.player_data.horizontal_angle.sin()) as f32,
-            (self.player_data.vertical_angle.cos() * self.player_data.horizontal_angle.cos()) as f32,
-            self.player_data.vertical_angle.sin() as f32,
+            (player.vertical_angle.cos() * player.horizontal_angle.sin()) as f32,
+            (player.vertical_angle.cos() * player.horizontal_angle.cos()) as f32,
+            player.vertical_angle.sin() as f32,
         );
 
         let right = glm::vec3(
-            (self.player_data.horizontal_angle - 3.14 / 2.0).sin() as f32,
-            (self.player_data.horizontal_angle - 3.14 / 2.0).cos() as f32,
+            (player.horizontal_angle - 3.14 / 2.0).sin() as f32,
+            (player.horizontal_angle - 3.14 / 2.0).cos() as f32,
             0.0,
         );
 
         let up = glm::cross(&right, &look_direction);
 
         let center = glm::vec3(
-            self.player_data.transform.position.x + look_direction.x as f32,
-            self.player_data.transform.position.y + look_direction.y as f32,
-            self.player_data.transform.position.z + look_direction.z as f32,
+            player.transform.position.x + look_direction.x as f32,
+            player.transform.position.y + look_direction.y as f32,
+            player.transform.position.z + look_direction.z as f32,
         );
 
-        let view = glm::look_at(&self.player_data.transform.position, &center, &up);
+        let view = glm::look_at(&player.transform.position, &center, &up);
 
         let mut proj = glm::perspective_rh_zo(
             self.data.swapchain_extent.width as f32 / self.data.swapchain_extent.height as f32,

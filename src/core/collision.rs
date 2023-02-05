@@ -1,6 +1,7 @@
 use std::mem;
 use nalgebra_glm as glm;
 use crate::core::collider::Collider;
+use crate::core::math_functions::vector_triple_product;
 use crate::core::simplex::Simplex;
 
 fn support(collider_a: &Collider, collider_b: &Collider, direction: glm::Vec3) -> glm::Vec3 {
@@ -28,7 +29,7 @@ fn line(points: &mut Simplex, direction: &mut glm::Vec3) -> bool {
     let ao = -a;
 
     if same_direction(ab, ao) {
-        let new_direction = glm::cross(&glm::cross(&ab, &ao), &ab);
+        let new_direction = vector_triple_product(&ab, &ao, &ab);
         let _ = mem::replace(direction, new_direction);
     } else {
         points[0] = a;
@@ -59,7 +60,8 @@ fn triangle(points: &mut Simplex, direction: &mut glm::Vec3) -> bool {
             points[1] = c;
             points[2] = glm::vec3(0.0 ,0.0, 0.0);
             points[3] = glm::vec3(0.0 ,0.0, 0.0);
-            let _ = mem::replace(direction, glm::cross(&glm::cross(&ac, &ao), &ac));
+            let new_direction = vector_triple_product(&ac, &ao, &ac);
+            let _ = mem::replace(direction, new_direction);
         } else {
             return line(&mut Simplex::from_list(vec![a, b]), direction);
         }
@@ -74,10 +76,6 @@ fn triangle(points: &mut Simplex, direction: &mut glm::Vec3) -> bool {
                 points[0] = b;
                 points[0] = c;
                 points[3] = glm::vec3(0.0, 0.0, 0.0);
-
-                //
-                //
-                //
 
                 let _ = mem::replace(direction, -abc);
             }
@@ -114,6 +112,8 @@ fn tetrahedron(points: &mut Simplex, direction: &mut glm::Vec3) -> bool {
         return triangle(&mut Simplex::from_list(vec![a, d, b]), direction);
     }
 
+    println!("\n\n\n {}, {}, {}, {}", a, b, c, d);
+
     true
 }
 
@@ -126,7 +126,7 @@ pub(crate) fn intersects(collider_a: &Collider, collider_b: &Collider) -> bool {
     loop {
         support_vector = support(collider_a, collider_b, direction);
 
-        if glm::dot(&direction, &support_vector) <= 0.0 { // TODO: Maybe (<), not (<=)
+        if glm::dot(&direction, &support_vector) < 0.0 { // TODO: Maybe (<), not (<=)
             return false;
         }
 

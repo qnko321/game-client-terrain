@@ -1,4 +1,5 @@
 use nalgebra_glm as glm;
+use nalgebra_glm::TVec3;
 
 // Matrix
 
@@ -108,4 +109,8 @@ pub(crate) fn scale(scale: glm::Vec3) -> glm::Mat4x4 {
 // Value manipulation
 pub(crate) fn remap(value: f64, source_min: f64, source_max: f64, dest_min: f64, dest_max: f64) -> f64 {
     dest_min + ((value - source_min) / (source_max - source_min)) * (dest_max - dest_min)
+}
+
+pub(crate) fn vector_triple_product(a: &TVec3<f32>, b: &TVec3<f32>, z: &TVec3<f32>) -> TVec3<f32> {
+    glm::cross(&glm::cross(a, b), z)
 }
