@@ -1,10 +1,9 @@
 use anyhow::Result;
 
 use vulkanalia::prelude::v1_0::*;
+use crate::core::app_data::AppData;
 
 use crate::graphics::physical_device::get_memory_type_index;
-use crate::AppData;
-
 use crate::graphics::single_time_commands::{begin_single_time_commands, end_single_time_commands};
 
 pub(crate) unsafe fn create_buffer(
@@ -54,6 +53,24 @@ pub(crate) unsafe fn copy_buffer(
     let command_buffer = begin_single_time_commands(device, data)?;
 
     let regions = vk::BufferCopy::builder().size(size);
+    device.cmd_copy_buffer(command_buffer, source, destination, &[regions]);
+
+    end_single_time_commands(device, data, command_buffer)?;
+
+    Ok(())
+}
+
+pub(crate) unsafe fn copy_buffer_offset(
+    device: &Device,
+    data: &AppData,
+    source: vk::Buffer,
+    destination: vk::Buffer,
+    size: vk::DeviceSize,
+    dst_offset: vk::DeviceSize,
+) -> Result<()> {
+    let command_buffer = begin_single_time_commands(device, data)?;
+
+    let regions = vk::BufferCopy::builder().size(size).dst_offset(dst_offset);
     device.cmd_copy_buffer(command_buffer, source, destination, &[regions]);
 
     end_single_time_commands(device, data, command_buffer)?;

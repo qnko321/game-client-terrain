@@ -11,5 +11,5 @@ layout(location = 0) in vec2 fragUV;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    outColor = vec4(texture(texSampler, fragUV).rgb, pcs.opacity); //texture(tex, vec3(fragUV, pcs.opacity));
+    outColor = vec4(texture(texSampler, fragUV).rgb, pcs.opacity);
 }

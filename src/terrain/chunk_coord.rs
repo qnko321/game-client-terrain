@@ -1,5 +1,5 @@
 use std::hash::{Hash, Hasher};
-use crate::terrain::chunk::Chunk;
+use crate::terrain::constants::CHUNK_SIZE;
 
 #[derive(Clone, Debug, Copy)]
 pub(crate) struct ChunkCoord {
@@ -26,18 +26,26 @@ impl Hash for ChunkCoord {
 
 impl ChunkCoord {
     pub(crate) fn zero() -> Self {
-        Self {
-            x: 0,
-            y: 0,
-            z: 0,
-        }
+        Self { x: 0, y: 0, z: 0 }
     }
 
     pub(crate) fn from_world_coords(x: i32, y: i32, z: i32) -> Self {
         Self {
-            x: x / Chunk::size(),
-            y: y / Chunk::size(),
-            z: z / Chunk::size(),
+            x: if x < 0 {
+                x / CHUNK_SIZE as i32 - 1
+            } else {
+                x / CHUNK_SIZE as i32
+            },
+            y: if y < 0 {
+                y / CHUNK_SIZE as i32 - 1
+            } else {
+                y / CHUNK_SIZE as i32
+            },
+            z: if z < 0 {
+                z / CHUNK_SIZE as i32 - 1
+            } else {
+                z / CHUNK_SIZE as i32
+            },
         }
     }
 
@@ -58,7 +66,6 @@ impl ChunkCoord {
     pub(crate) fn add_z(&mut self, z: i32) {
         self.z += z;
     }
-
 
     pub(crate) fn add_to_new(&self, x: i32, y: i32, z: i32) -> Self {
         Self {

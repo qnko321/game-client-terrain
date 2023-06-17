@@ -2,7 +2,7 @@ use nalgebra_glm as glm;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Collider {
-    pub(crate) vertices: Vec<glm::Vec3>
+    pub(crate) vertices: Vec<glm::Vec3>,
 }
 
 impl Collider {
@@ -20,13 +20,12 @@ impl Collider {
     }
 
     pub(crate) fn compensate_position(&self, position: glm::Vec3) -> Collider {
-        let vertices = self.vertices.iter().map(|vertex| {
-            vertex + position
-        })
-        .collect::<Vec<_>>();
+        let vertices = self
+            .vertices
+            .iter()
+            .map(|vertex| vertex + position)
+            .collect::<Vec<_>>();
 
-        Collider {
-            vertices
-        }
+        Collider { vertices }
     }
 }

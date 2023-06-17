@@ -5,11 +5,11 @@ use winit::window::Window;
 use vulkanalia::prelude::v1_0::*;
 
 use vulkanalia::vk::KhrSwapchainExtension;
+use crate::core::app_data::AppData;
 
 use crate::graphics::queue_family_indices::QueueFamilyIndices;
 use crate::graphics::shared_images::create_image_view;
 use crate::graphics::swapchain_support::SwapchainSupport;
-use crate::AppData;
 
 pub(crate) unsafe fn create_swapchain(
     window: &Window,

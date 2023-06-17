@@ -9,7 +9,8 @@ use vulkanalia::prelude::v1_0::*;
 
 use crate::graphics::queue_family_indices::QueueFamilyIndices;
 use crate::graphics::swapchain_support::SwapchainSupport;
-use crate::{AppData, DEVICE_EXTENSIONS};
+use crate::{DEVICE_EXTENSIONS};
+use crate::core::app_data::AppData;
 
 #[derive(Debug, Error)]
 #[error("{0}")]

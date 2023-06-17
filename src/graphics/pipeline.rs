@@ -1,8 +1,8 @@
 use crate::graphics::depth_objects::get_depth_format;
 use crate::graphics::vertex::Vertex;
-use crate::AppData;
 use anyhow::{anyhow, Result};
 use vulkanalia::prelude::v1_0::*;
+use crate::core::app_data::AppData;
 
 pub(crate) unsafe fn create_render_pass(
     instance: &Instance,
@@ -109,8 +109,8 @@ pub(crate) unsafe fn create_descriptor_set_layout(
 pub(crate) unsafe fn create_pipeline(device: &Device, data: &mut AppData) -> Result<()> {
     // Stages
 
-    let vert = include_bytes!("../../shaders/vert.spv");
-    let frag = include_bytes!("../../shaders/frag.spv");
+    let vert = include_bytes!("../../shaders/bin/vert.spv");
+    let frag = include_bytes!("../../shaders/bin/frag.spv");
 
     let vert_shader_module = create_shader_module(device, &vert[..])?;
     let frag_shader_module = create_shader_module(device, &frag[..])?;

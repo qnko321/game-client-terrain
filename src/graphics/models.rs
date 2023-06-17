@@ -2,8 +2,7 @@ use std::fs::File;
 use std::io::BufReader;
 
 use anyhow::Result;
-
-use crate::AppData;
+use crate::core::app_data::AppData;
 
 pub(crate) fn load_model(data: &mut AppData, path: &str) -> Result<()> {
     let mut reader = BufReader::new(File::open(path)?);

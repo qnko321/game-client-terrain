@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
-use aws_sdk_dynamodb::model::KeyType::Hash;
 use enigo::{Enigo, MouseControllable};
-use winit::event::{DeviceId, ElementState, KeyboardInput, ModifiersState, MouseButton, MouseScrollDelta, TouchPhase, VirtualKeyCode};
+use winit::event::{
+    DeviceId, ElementState, KeyboardInput, MouseButton, MouseScrollDelta, TouchPhase,
+    VirtualKeyCode,
+};
 use winit::window::Window;
-use crate::graphics::shared_images::copy_buffer_to_image;
 
 #[derive(Clone, Debug)]
 pub(crate) struct InputManager {
@@ -61,7 +62,7 @@ impl InputManager {
     }
 
     // Mouse
-    pub(crate) fn get_key_down_mouse(&mut self, button: MouseButton) -> bool {
+    pub(crate) fn get_key_down_mouse(&self, button: MouseButton) -> bool {
         self.pressed_current_frame_mouse.contains(&button)
     }
 
@@ -90,7 +91,7 @@ impl InputManager {
     }
 
     // Handling
-    pub(crate) fn handle_mouse(&mut self, window: &Window, is_cursor_locked: bool) -> Result<()>{
+    pub(crate) fn handle_mouse(&mut self, window: &Window, is_cursor_locked: bool) -> Result<()> {
         let window_inner_position = window.inner_position()?;
         let window_inner_size = window.inner_size();
 
@@ -105,7 +106,10 @@ impl InputManager {
             self.mouse_delta = (x_offset, y_offset);
             Enigo.mouse_move_to(window_center_x, window_center_y);
         } else {
-            self.mouse_delta = (-self.last_mouse_delta.0 + x_offset, -self.last_mouse_delta.1 + y_offset);
+            self.mouse_delta = (
+                -self.last_mouse_delta.0 + x_offset,
+                -self.last_mouse_delta.1 + y_offset,
+            );
         }
 
         self.last_mouse_delta = (x_offset, y_offset);
@@ -122,7 +126,13 @@ impl InputManager {
         self.scroll_delta = 0;
     }
 
-    pub(crate) fn detect_keyboard(&mut self, device_id: DeviceId, input: KeyboardInput, is_synthetic: bool, current_frame: u128, ) -> Result<()> {
+    pub(crate) fn detect_keyboard(
+        &mut self,
+        device_id: DeviceId,
+        input: KeyboardInput,
+        is_synthetic: bool,
+        current_frame: u128,
+    ) -> Result<()> {
         if current_frame != self.last_frame {
             self.last_frame = current_frame;
             self.detected_new_frame();
@@ -155,7 +165,13 @@ impl InputManager {
         Ok(())
     }
 
-    pub(crate) fn detect_mouse(&mut self, device_id: DeviceId, button: MouseButton, state: ElementState, current_frame: u128) {
+    pub(crate) fn detect_mouse(
+        &mut self,
+        device_id: DeviceId,
+        button: MouseButton,
+        state: ElementState,
+        current_frame: u128,
+    ) {
         if current_frame != self.last_frame {
             self.last_frame = current_frame;
             self.detected_new_frame();
@@ -163,10 +179,13 @@ impl InputManager {
 
         match state {
             ElementState::Pressed => {
-                if !self.pressed_current_frame_mouse.contains(&button) && !self.currently_pressed_mouse.contains_key(&button) {
+                if !self.pressed_current_frame_mouse.contains(&button)
+                    && !self.currently_pressed_mouse.contains_key(&button)
+                {
                     self.pressed_current_frame_mouse.push(button);
                 }
-                self.currently_pressed_mouse.insert(button, self.currently_pressed_mouse.len());
+                self.currently_pressed_mouse
+                    .insert(button, self.currently_pressed_mouse.len());
             }
             ElementState::Released => {
                 self.currently_pressed_mouse.remove(&button);
@@ -175,27 +194,29 @@ impl InputManager {
         }
     }
 
-    pub(crate) fn detect_wheel(&mut self, device_id: DeviceId, delta: MouseScrollDelta, phase: TouchPhase, current_frame: u128) {
+    pub(crate) fn detect_wheel(
+        &mut self,
+        device_id: DeviceId,
+        delta: MouseScrollDelta,
+        phase: TouchPhase,
+        current_frame: u128,
+    ) {
         if current_frame != self.last_frame {
             self.last_frame = current_frame;
             self.detected_new_frame();
         }
 
-        match delta {
-            MouseScrollDelta::LineDelta(0_f32, 1_f32) => {
-                self.scrolled_up = true;
-                self.scroll_delta += 1;
-            }
-            MouseScrollDelta::LineDelta(0_f32, -1_f32) => {
-                self.scrolled_down = true;
-                self.scroll_delta -= 1;
-            }
-            _ => {},
+        if delta == MouseScrollDelta::LineDelta(0.0, 1.0) {
+            self.scrolled_up = true;
+            self.scroll_delta += 1;
+        } else if delta == MouseScrollDelta::LineDelta(0.0, -1.0) {
+            self.scrolled_down = true;
+            self.scroll_delta -= 1;
         }
     }
 }
 
 pub(crate) enum ScrollWheelDelta {
     Up,
-    Down
+    Down,
 }

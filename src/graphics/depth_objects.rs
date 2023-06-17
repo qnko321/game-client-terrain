@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 
 use crate::graphics::shared_images::{create_image, create_image_view};
-use crate::AppData;
 
 use vulkanalia::prelude::v1_0::*;
+use crate::core::app_data::AppData;
 
 pub(crate) unsafe fn create_depth_objects(
     instance: &Instance,

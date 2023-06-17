@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
 
 use vulkanalia::prelude::v1_0::*;
+use crate::core::app_data::AppData;
 
 use crate::graphics::physical_device::get_memory_type_index;
 use crate::graphics::single_time_commands::{begin_single_time_commands, end_single_time_commands};
-use crate::AppData;
 
 pub(crate) unsafe fn create_image(
     instance: &Instance,

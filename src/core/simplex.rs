@@ -1,10 +1,21 @@
-use std::cmp::{max, min};
-use std::ops;
 use nalgebra_glm as glm;
+use std::cmp::{max, min};
+use std::fmt::{Debug, Formatter};
+use std::ops;
 
+#[derive(Clone)]
 pub(crate) struct Simplex {
     points: [glm::Vec3; 4],
     size: u8,
+}
+
+impl Debug for Simplex {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Simplex")
+            .field("points", &self.points)
+            .field("size", &self.size)
+            .finish()
+    }
 }
 
 impl Simplex {
@@ -33,6 +44,14 @@ impl Simplex {
 
     pub(crate) fn size(&self) -> u8 {
         self.size
+    }
+
+    pub(crate) fn get(&self, index: usize) -> &glm::Vec3 {
+        self.points.get(index).unwrap()
+    }
+
+    pub(crate) fn set(&mut self, index: usize, value: glm::Vec3) {
+        self.points[index] = value;
     }
 
     fn begin(&self) -> glm::Vec3 {

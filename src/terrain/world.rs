@@ -1,190 +1,248 @@
 use std::collections::HashMap;
-use crate::terrain::chunk::{Chunk};
-use crate::terrain::voxel::Face;
-use crate::terrain::voxel::VoxelType;
-use crate::AppData;
-use lazy_static::lazy_static;
-use vulkanalia::{Device, Instance};
-use anyhow::{anyhow, Result};
-use log::error;
+use std::sync::mpsc;
+use std::thread;
+use std::thread::{spawn, Thread};
+use anyhow::anyhow;
+use vulkanalia::{Device, Instance, vk};
+use nalgebra_glm as glm;
+use crate::core::app_data::AppData;
+use crate::core::math_functions::{remap, translate};
+use crate::graphics::texturing_shared::calculate_uv;
+use crate::graphics::vertex::Vertex;
+use crate::terrain::chunk::chunk_mesh::ChunkMesh;
 use crate::terrain::chunk_coord::ChunkCoord;
-use crate::terrain::face_direction::FaceDirection;
-use crate::terrain::mesh_data::MeshData;
+use crate::terrain::direction_map::DirectionMap;
+use crate::terrain::perlin_noise::perlin_noise2d;
+use crate::terrain::voxel::voxel_face::VoxelFace;
+use crate::terrain::voxel::voxel_face_direction::VoxelFaceDirection;
+use crate::terrain::voxel::voxel_mesh::VoxelMesh;
+use crate::terrain::voxel::voxel_position::{VoxelChunkPosition, VoxelPositionAddError};
+use crate::terrain::voxel::voxel_type::VoxelType;
+use crate::terrain::voxel::voxel_types::VOXEL_TYPES;
 
-lazy_static!(
-    pub(crate) static ref BLOCK_MESHES : Vec<VoxelType> = {
-        let mut types = Vec::new();
-        // 0
-        let air = VoxelType::new(vec![], false, [true, true, true, true, true, true]);
-        types.push(air);
-        // 1
-        let grass = VoxelType::new(
-            vec![
-                Face::front(2),
-                Face::back(2),
-                Face::left(2),
-                Face::right(2),
-                Face::top(7),
-                Face::bottom(1),
-            ],
-            true,
-            [false, false, false, false, false, false]
-        );
-        types.push(grass);
-        // 2
-        let stone = VoxelType::new(
-            vec![
-                Face::front(0),
-                Face::back(0),
-                Face::left(0),
-                Face::right(0),
-                Face::top(0),
-                Face::bottom(0),
-            ],
-            true,
-            [false, false, false, false, false, false]
-        );
-        types.push(stone);
+type VoxelId = u8;
+type ChunkVoxelMap = [u8; CHUNK_SIZE as usize * CHUNK_SIZE as usize * CHUNK_SIZE as usize];
 
-        // 3
-        let dirt = VoxelType::new(
-            vec![
-                Face::front(1),
-                Face::back(1),
-                Face::left(1),
-                Face::right(1),
-                Face::top(1),
-                Face::bottom(1),
-            ],
-            true,
-            [false, false, false, false, false, false]
-        );
-        types.push(dirt);
+const CHUNK_SIZE: u8 = 32;
+const VOXELS_COUNT_IN_CHUNK: usize = CHUNK_SIZE as usize * CHUNK_SIZE as usize * CHUNK_SIZE as usize;
+pub(crate) static TEXTURE_ATLAS_SIZE_IN_BLOCKS: u8 = 4;
+pub(crate) static NORMALIZED_BLOCK_TEXTURE_SIZE: f32 = 1.0 / TEXTURE_ATLAS_SIZE_IN_BLOCKS as f32;
 
-        // 4
-        let bedrock = VoxelType::new(
-            vec![
-                Face::front(9),
-                Face::back(9),
-                Face::left(9),
-                Face::right(9),
-                Face::top(9),
-                Face::bottom(9),
-            ],
-            true,
-            [false, false, false, false, false, false]
-        );
-        types.push(bedrock);
 
-        types
-    };
-);
-
-static VIEW_DISTANCE_IN_CHUNKS: i8 = 2;
-static TEXTURE_ATLAS_SIZE_IN_BLOCKS: u8 = 4;
-static NORMALIZED_BLOCK_TEXTURE_SIZE: f32 = 1.0 / TEXTURE_ATLAS_SIZE_IN_BLOCKS as f32;
-
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct World {
-    chunks: HashMap<ChunkCoord, Chunk>,
-    previously_active_chunks: Vec<ChunkCoord>,
-    last_player_chunk: ChunkCoord,
+    pub(crate) chunks: HashMap<ChunkCoord, ThreadedChunk>
 }
 
 impl World {
-    pub(crate) const fn height_in_chunks() -> i32 {
-        8
-    }
-
-    pub(crate) const fn height_in_voxels() -> i32 {
-        Self::height_in_chunks() * Chunk::size()
-    }
-
-    pub(crate) fn new() -> Self {
+    pub(crate) fn load(start_position: glm::Vec3) -> Self {
         Self {
             chunks: HashMap::new(),
-            previously_active_chunks: Vec::new(),
-            last_player_chunk: ChunkCoord::zero(),
         }
     }
 
-    pub(crate) unsafe fn load_spawn(&mut self, instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
-        for x in -VIEW_DISTANCE_IN_CHUNKS..VIEW_DISTANCE_IN_CHUNKS {
-            for y in -VIEW_DISTANCE_IN_CHUNKS..VIEW_DISTANCE_IN_CHUNKS {
-                self.load_spawn_chunk(x, y, instance, device, data)?;
-            }
-        }
+    pub(crate) fn generate_chunk_voxel_map(&mut self, coord: &ChunkCoord) {
+        let mut voxel_map: ChunkVoxelMap = [0u8; VOXELS_COUNT_IN_CHUNK];
+        for x in 0..CHUNK_SIZE as u8 {
+            for y in 0..CHUNK_SIZE as u8 {
+                let world_x = coord.x * CHUNK_SIZE as i32;
+                let world_y = coord.y * CHUNK_SIZE as i32;
 
-        Ok(())
-    }
+                let noise_value = remap(
+                    perlin_noise2d(world_x as f64 * 0.1, world_y as f64 * 0.1),
+                    -1.0,
+                    1.0,
+                    0.0,
+                    1.0,
+                );
 
-    unsafe fn load_spawn_chunk(&mut self, x: i8, y: i8, instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
-        let coord = ChunkCoord { x: x as i32, y: y as i32, z: 0 };
-        let mut chunk = Chunk::from_coord(&coord);
-        chunk.generate();
-        let mesh_data = get_mesh(&self, &mut chunk);
-        chunk.update_mesh(mesh_data, instance, device, data)?;
-        self.chunks.insert(coord, chunk);
-        self.previously_active_chunks.push(coord);
-
-        Ok(())
-    }
-
-    pub(crate) unsafe fn update_view_distance(&mut self, x: i32, y: i32, z: i32, instance: &Instance, device: &Device, data: &mut AppData) -> Result<()> {
-        let player_chunk = ChunkCoord::from_world_coords(x, y, z);
-        if player_chunk == self.last_player_chunk {
-            return Ok(());
-        }
-        self.last_player_chunk = player_chunk.clone();
-
-        for previously_active_chunk in &self.previously_active_chunks {
-            match self.chunks.get_mut(previously_active_chunk) {
-                Some(chunk) => chunk.set_should_draw(false),
-                None => { error!("Chunk coord is found in hashmap but can't retrieve it 1"); }
-            }
-        }
-        self.previously_active_chunks.clear();
-
-        for x_offset in -VIEW_DISTANCE_IN_CHUNKS..VIEW_DISTANCE_IN_CHUNKS {
-            for y_offset in -VIEW_DISTANCE_IN_CHUNKS..VIEW_DISTANCE_IN_CHUNKS {
-                // TODO: Add support for multiple chunks on the Z axis (height)
-                let chunk_coord = ChunkCoord { x: player_chunk.x + x_offset as i32, y: player_chunk.y + y_offset as i32, z: 0 };
-                if self.chunks.contains_key(&chunk_coord) {
-                    match self.chunks.get_mut(&chunk_coord) {
-                        Some(chunk) => {
-                            chunk.set_should_draw(true);
-                            self.previously_active_chunks.push(chunk_coord);
-                        },
-                        None => {
-                            error!("Chunk coord is found in hashmap but can't retrieve it 2");
-                        }
-                    }
-                } else {
-                    let mut chunk = Chunk::from_coord(&chunk_coord);
-                    chunk.generate();
-                    let mesh_data = get_mesh(&self, &mut chunk);
-                    chunk.update_mesh(mesh_data, instance, device, data)?;
-                    self.chunks.insert(chunk_coord, chunk);
-                    self.previously_active_chunks.push(chunk_coord);
+                for z in 0..CHUNK_SIZE as u8 {
+                    let world_z = coord.z * CHUNK_SIZE as i32 + z as i32;
+                    let voxel_id = Self::get_voxel(world_z, noise_value);
+                    let voxel_index = VoxelChunkPosition::new(x, y, z).to_index();
+                    voxel_map[voxel_index] = voxel_id;
                 }
             }
         }
-
-        Ok(())
+        let mut threaded_chunk = ThreadedChunk::new(coord);
+        threaded_chunk.chunk.voxel_map = voxel_map;
+        self.chunks.insert(coord.clone(), threaded_chunk);
     }
 
-    pub(crate) unsafe fn destroy(&mut self, device: &Device) {
-        for chunk in self.chunks.values().into_iter() {
-            chunk.destroy(device);
+    // TODO: MAKE THAT FUNCTION WITH MULTIPLE PASSES AND WAY MORE COMPLEX
+    fn get_voxel(z: i32, height: f64) -> VoxelId {
+        if z == 0 {
+            return 4;
+        }
+
+        let height_multiplier = 6.0;
+        let solid_ground_height = 10.0;
+        let terrain_height = (height * height_multiplier).floor() + solid_ground_height;
+        let voxel_id: VoxelId;
+
+        if z as f64 == terrain_height {
+            voxel_id = 1;
+        } else if z as f64 == terrain_height && z as f64 > terrain_height - 4.0 {
+            voxel_id = 3;
+        } else if z as f64 > terrain_height {
+            voxel_id = 0;
+        } else {
+            voxel_id = 2;
+        }
+
+        voxel_id
+    }
+
+    pub(crate) fn mesh_chunk_sync(&mut self, coord: &ChunkCoord, instance: &Instance, device: &Device, data: &mut AppData) {
+        let mut threaded_chunk = self.chunks.get_mut(coord).expect("Couldn't get chunk"); // fix: generate chunk instead of panic
+
+        let own_voxel_map = threaded_chunk.chunk.voxel_map;
+        let neighbour_voxel_maps = self.get_neighbour_voxel_maps(coord);
+
+        let mut chunk_mesh = ChunkMesh::new();
+        for voxel_index in 0_usize..VOXELS_COUNT_IN_CHUNK {
+            let voxel_id = *own_voxel_map.get(voxel_index).unwrap();
+            if voxel_id == 0 {
+                continue;
+            }
+            let voxel_mesh = Self::mesh_voxel(voxel_index, voxel_id, Self::should_draw(voxel_index, &own_voxel_map, &neighbour_voxel_maps), chunk_mesh.get_vertex_index());
+            chunk_mesh.add_voxel_mesh(voxel_mesh);
+        }
+        create_chunk_vertex_buffer(instance, device, data, self)?;
+        create_chunk_index_buffer(instance, device, data, self)?;
+        println!("{:?}", chunk_mesh);
+    }
+
+/*    pub(crate) fn mesh_chunk(&mut self, coord: &ChunkCoord) {
+        let mut threaded_chunk = self.chunks.get_mut(coord).expect("Couldn't get chunk"); // fix: generate chunk instead of panic
+        if threaded_chunk.in_use {
+            threaded_chunk.stop_sender.as_ref().unwrap().send(()).unwrap();
+            threaded_chunk.has_stopped_receiver.as_ref().unwrap().recv().unwrap();
+
+            let own_voxel_map = self.chunks.get(coord).unwrap().get_voxels();
+            let neighbour_voxel_maps = self.get_neighbour_voxel_maps(coord);
+
+            let (stop_sender, stop_receiver) = tokio::sync::oneshot::channel::<()>();
+
+            let handle = tokio::spawn(async move {
+                let mut stop_receiver = Some(stop_receiver);
+                let mut chunk_mesh = ChunkMesh::new();
+                for voxel_index in 0_usize..VOXELS_COUNT_IN_CHUNK {
+                    let voxel_id = *own_voxel_map.get(voxel_index).unwrap();
+                    if voxel_id == 0 {
+                        continue;
+                    }
+                    tokio::select! {
+                        data = Self::mesh_voxel(voxel_index, voxel_id, Self::should_draw(voxel_index, &own_voxel_map, &neighbour_voxel_maps), chunk_mesh.get_vertex_index()) => {
+                            chunk_mesh.add_voxel_mesh(data);
+                        }
+                        _ = stop_receiver.as_mut().unwrap() => {
+                            println!("Task is stopping");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+    }
+*/
+    fn should_draw(voxel_index: usize, own_voxel_map: &ChunkVoxelMap, neighbour_voxel_maps: &DirectionMap<ChunkVoxelMap>) -> DirectionMap<bool>{
+        let voxel_position = VoxelChunkPosition::from_index(voxel_index);
+
+        let should_draw_vec = VoxelFaceDirection::to_vec().iter().map(|direction| {
+            Self::should_draw_face(voxel_position, direction, own_voxel_map, neighbour_voxel_maps)
+        }).collect::<Vec<bool>>();
+
+        DirectionMap::from_slice(should_draw_vec.as_slice())
+    }
+
+    fn should_draw_face(voxel_position: VoxelChunkPosition, direction: &VoxelFaceDirection, own_voxel_map: &ChunkVoxelMap, neighbour_voxel_maps: &DirectionMap<ChunkVoxelMap>) -> bool {
+         match voxel_position.add_from_direction(direction) {
+            Ok(position) => {
+                let voxel_id = *own_voxel_map.get(position.to_index()).unwrap();
+                let neighbour_voxel_type: &VoxelType = VOXEL_TYPES.get(voxel_id as usize).unwrap();
+                let should_draw = *neighbour_voxel_type.draw_neighbours.get_ref_by_voxel_face_direction(&direction).unwrap();
+                should_draw
+            }
+            Err(error) => match error {
+                VoxelPositionAddError::OutOfUpperBound(_, position) => {
+                    println!("{:?}", position);
+                    let voxel_id = *neighbour_voxel_maps.get_ref_by_voxel_face_direction(&direction).unwrap().get(position.to_index()).unwrap();
+                    let neighbour_voxel_type: &VoxelType = VOXEL_TYPES.get(voxel_id as usize).unwrap();
+                    let should_draw = *neighbour_voxel_type.draw_neighbours.get_ref_by_voxel_face_direction(&direction).unwrap();
+                    should_draw
+                }
+                _ => false
+            }
         }
     }
 
-    pub(crate) fn chunks_len(&self) -> usize {
-        self.chunks.len()
+    /*async*/ fn mesh_voxel(voxel_index: usize, voxel_id: VoxelId, should_draw: DirectionMap<bool>, chunk_vertex_index: u32) -> VoxelMesh {
+        let mut voxel_mesh = VoxelMesh::new();
+
+        let voxel_type: &VoxelType = VOXEL_TYPES.get(voxel_id as usize).unwrap();
+        let mut local_vertex_index: usize = 0;
+        let voxel_chunk_pos = VoxelChunkPosition::from_index(voxel_index);
+        for face in &voxel_type.faces {
+            if should_draw.get_ref_by_voxel_face_direction(&face.direction).is_some() {
+                for vertex_data in &face.vertices {
+                    let uv = calculate_uv(face.texture, vertex_data.1, TEXTURE_ATLAS_SIZE_IN_BLOCKS, NORMALIZED_BLOCK_TEXTURE_SIZE);
+                    voxel_mesh.vertices.push(Vertex {
+                        position: voxel_chunk_pos.to_vec3() + vertex_data.0,
+                        uv,
+                    });
+                }
+                for index in &face.indices {
+                    voxel_mesh.indices.push(chunk_vertex_index + voxel_mesh.vertex_index + index);
+                }
+                voxel_mesh.vertex_index += face.indices.len() as u32
+            }
+        }
+
+        voxel_mesh
     }
 
-    // TODO: Fix
-    pub(crate) fn get_chunk_by_index(&self, index: usize) -> Result<&Chunk> {
+    fn get_neighbour_voxel_maps(&self, coord: &ChunkCoord) -> DirectionMap<ChunkVoxelMap> {
+        let back_neighbour = match self.chunks.get(&coord.add_y_to_new(1)) {
+            None => [0; 32*32*32],
+            Some(threaded_chunk) => threaded_chunk.get_voxels(),
+        };
+        let front_neighbour = match self.chunks.get(&coord.add_y_to_new(-1)) {
+            None => [0; 32*32*32],
+            Some(threaded_chunk) => threaded_chunk.get_voxels(),
+        };
+        let left_neighbour = match self.chunks.get(&coord.add_x_to_new(-1)) {
+            None => [0; 32*32*32],
+            Some(threaded_chunk) => threaded_chunk.get_voxels(),
+        };
+        let right_neighbour = match self.chunks.get(&coord.add_x_to_new(1)) {
+            None => [0; 32*32*32],
+            Some(threaded_chunk) => threaded_chunk.get_voxels(),
+        };
+        let top_neighbour = match self.chunks.get(&coord.add_z_to_new(1)) {
+            None => [0; 32*32*32],
+            Some(threaded_chunk) => threaded_chunk.get_voxels(),
+        };
+        let bottom_neighbour = match self.chunks.get(&coord.add_z_to_new(-1)) {
+            None => [0; 32*32*32],
+            Some(threaded_chunk) => threaded_chunk.get_voxels(),
+        };
+        let back_neighbour = match self.chunks.get(&coord.add_x_to_new(-1)) {
+            None => [0; 32*32*32],
+            Some(threaded_chunk) => threaded_chunk.get_voxels(),
+        };
+
+        DirectionMap {
+            front: front_neighbour,
+            back: back_neighbour,
+            left: left_neighbour,
+            right: right_neighbour,
+            top: top_neighbour,
+            bottom: bottom_neighbour,
+        }
+    }
+
+    pub(crate) fn get_chunk_by_index(&self, index: usize) -> anyhow::Result<&ThreadedChunk> {
         let mut counter = 0_i32;
         for (coord, chunk) in &self.chunks {
             if counter == index as i32 {
@@ -196,116 +254,75 @@ impl World {
         Err(anyhow!("No chunk at index: {}", index))
     }
 
-    /*pub(crate) fn get_chunk_by_world_coords(&self, ) -> Option<&Chunk> {
-        //self.chunks.get(&coord)
-    }*/
+    pub(crate) fn destroy(&self, device: &Device) {
 
-    pub(crate) fn get_voxel_id(&self, chunk_coord: ChunkCoord, voxel_x: u8, voxel_y: u8, voxel_z: u8) -> u8 {
-        let chunk = self.chunks.get(&chunk_coord);
-        return match chunk {
-            Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y, voxel_z),
-            None => 0,
-        }
-    }
-
-    pub(crate) fn get_neighbour_voxel_id(&self, chunk_coord: ChunkCoord, voxel_x: u8, voxel_y: u8, voxel_z: u8, direction: FaceDirection) -> u8 {
-        match direction {
-            FaceDirection::Back => {
-                if voxel_x == 0 {
-                    let chunk = self.chunks.get(&chunk_coord.add_x_to_new(-1));
-                    return match chunk {
-                        Some(chunk) => chunk.get_voxel_id((Chunk::size() - 1) as u8, voxel_y, voxel_z),
-                        None => 0,
-                    }
-                }
-                let chunk = self.chunks.get(&chunk_coord);
-                match chunk {
-                    Some(chunk) => chunk.get_voxel_id(voxel_x - 1, voxel_y, voxel_z),
-                    None => 0,
-                }
-            }
-            FaceDirection::Front => {
-                if i32::from(voxel_x) == Chunk::size() - 1 {
-                    let chunk = self.chunks.get(&chunk_coord.add_x_to_new(1));
-                    return match chunk {
-                        Some(chunk) => chunk.get_voxel_id(0, voxel_y, voxel_z),
-                        None => 0,
-                    }
-                }
-                let chunk = self.chunks.get(&chunk_coord);
-                match chunk {
-                    Some(chunk) => chunk.get_voxel_id(voxel_x + 1, voxel_y, voxel_z),
-                    None => 0,
-                }
-            }
-            FaceDirection::Left => {
-                if voxel_y == 0 {
-                    let chunk = self.chunks.get(&chunk_coord.add_y_to_new(-1));
-                    return match chunk {
-                        Some(chunk) => chunk.get_voxel_id(voxel_x, (Chunk::size() - 1) as u8, voxel_z),
-                        None => 0,
-                    }
-                }
-                let chunk = self.chunks.get(&chunk_coord);
-                match chunk {
-                    Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y - 1, voxel_z),
-                    None => 0,
-                }
-            }
-            FaceDirection::Right => {
-                if i32::from(voxel_y) == Chunk::size() - 1 {
-                    let chunk = self.chunks.get(&chunk_coord.add_y_to_new(1));
-                    return match chunk {
-                        Some(chunk) => chunk.get_voxel_id(voxel_x, (Chunk::size() - 1) as u8, voxel_z),
-                        None => 0,
-                    }
-                }
-                let chunk = self.chunks.get(&chunk_coord);
-                match chunk {
-                    Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y + 1, voxel_z),
-                    None => 0,
-                }
-            }
-            FaceDirection::Bottom => {
-                if voxel_z == 0 {
-                    let chunk = self.chunks.get(&chunk_coord.add_z_to_new(-1));
-                    return match chunk {
-                        Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y, (Chunk::size() - 1) as u8),
-                        None => 0,
-                    }
-                }
-                let chunk = self.chunks.get(&chunk_coord);
-                match chunk {
-                    Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y, voxel_z - 1),
-                    None => 0,
-                }
-            }
-            FaceDirection::Top => {
-                if i32::from(voxel_z) == Chunk::size() - 1 {
-                    let chunk = self.chunks.get(&chunk_coord.add_z_to_new(1));
-                    return match chunk {
-                        Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y, 0),
-                        None => 0,
-                    }
-                }
-                let chunk = self.chunks.get(&chunk_coord);
-                match chunk {
-                    Some(chunk) => chunk.get_voxel_id(voxel_x, voxel_y, voxel_z + 1),
-                    None => 0,
-                }
-            }
-            //TODO: FIX
-            FaceDirection::Other => 0,
-        }
     }
 }
 
-pub(crate) fn get_mesh(world: &World, chunk: &mut Chunk) -> MeshData {
-    let data = chunk.to_mesh_data(
-        world,
-        &BLOCK_MESHES,
-        TEXTURE_ATLAS_SIZE_IN_BLOCKS,
-        NORMALIZED_BLOCK_TEXTURE_SIZE,
-    );
-    data
+#[derive(Debug)]
+pub struct ThreadedChunk {
+    in_use: bool,
+    should_draw: bool,
+    chunk: Chunk,
+    stop_sender: Option<crossbeam::channel::Sender<()>>,
+    has_stopped_receiver: Option<crossbeam::channel::Receiver<()>>,
+    model_matrix: glm::Mat4,
+
+    //Buffers
+    vertex_buffer: vk::Buffer,
+    vertex_buffer_memory: vk::DeviceMemory,
+    index: vk::Buffer,
+    index_buffer_memory: vk::DeviceMemory,
+}
+
+impl ThreadedChunk {
+    fn new(coord: &ChunkCoord) -> Self {
+        let model_matrix = translate(glm::vec3(
+            (coord.x * CHUNK_SIZE as i32) as f32,
+            (coord.y * CHUNK_SIZE as i32) as f32,
+            (coord.z * CHUNK_SIZE as i32) as f32,
+        ));
+        Self {
+            in_use: false,
+            should_draw: true,
+            chunk: Chunk::new(),
+            stop_sender: None,
+            has_stopped_receiver: None,
+            model_matrix: modle_matrix,
+            vertex_buffer: Default::default(),
+            vertex_buffer_memory: Default::default(),
+            index: Default::default(),
+            index_buffer_memory: Default::default(),
+        }
+    }
+
+    fn set_buffers(vertex_buffer: vk::Buffer, vertex_buffer_memory: vk::DeviceMemory, index_buffer: vk::Buffer, index_buffer_memory: vk::DeviceMemory) {
+
+    }
+
+    fn get_voxels(&self) -> ChunkVoxelMap {
+        self.chunk.voxel_map.clone()
+    }
+
+    fn get_voxel(&self, index: usize) -> VoxelId {
+        *self.chunk.voxel_map.get(index).unwrap()
+    }
+
+    pub(crate) fn get_model_matrix(&self) -> glm::Mat4 {
+        self.model_matrix
+    }
+}
+
+// only the World can use Chunk struct
+#[derive(Clone, Debug)]
+pub struct Chunk {
+    voxel_map: ChunkVoxelMap,
+}
+
+impl Chunk {
+    fn new() -> Self {
+        Self {
+            voxel_map: [0; 32*32*32],
+        }
+    }
 }

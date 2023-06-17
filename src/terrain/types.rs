@@ -1,0 +1,1 @@
+pub(crate) type VoxelId = u8;

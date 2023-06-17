@@ -1,8 +1,8 @@
-use std::mem;
-use nalgebra_glm as glm;
 use crate::core::collider::Collider;
 use crate::core::math_functions::vector_triple_product;
 use crate::core::simplex::Simplex;
+use nalgebra_glm as glm;
+use std::mem;
 
 fn support(collider_a: &Collider, collider_b: &Collider, direction: glm::Vec3) -> glm::Vec3 {
     collider_a.find_furthest_point(direction) - collider_b.find_furthest_point(-direction)
@@ -13,7 +13,7 @@ fn next_simplex(points: &mut Simplex, direction: &mut glm::Vec3) -> bool {
         2 => line(points, direction),
         3 => triangle(points, direction),
         4 => tetrahedron(points, direction),
-        _ => false
+        _ => false,
     };
 }
 
@@ -58,8 +58,8 @@ fn triangle(points: &mut Simplex, direction: &mut glm::Vec3) -> bool {
         if same_direction(ac, ao) {
             points[0] = a;
             points[1] = c;
-            points[2] = glm::vec3(0.0 ,0.0, 0.0);
-            points[3] = glm::vec3(0.0 ,0.0, 0.0);
+            points[2] = glm::vec3(0.0, 0.0, 0.0);
+            points[3] = glm::vec3(0.0, 0.0, 0.0);
             let new_direction = vector_triple_product(&ac, &ao, &ac);
             let _ = mem::replace(direction, new_direction);
         } else {
@@ -73,8 +73,8 @@ fn triangle(points: &mut Simplex, direction: &mut glm::Vec3) -> bool {
                 let _ = mem::replace(direction, abc);
             } else {
                 points[0] = a;
-                points[0] = b;
-                points[0] = c;
+                points[1] = b;
+                points[2] = c;
                 points[3] = glm::vec3(0.0, 0.0, 0.0);
 
                 let _ = mem::replace(direction, -abc);
@@ -126,14 +126,80 @@ pub(crate) fn intersects(collider_a: &Collider, collider_b: &Collider) -> bool {
     loop {
         support_vector = support(collider_a, collider_b, direction);
 
-        if glm::dot(&direction, &support_vector) < 0.0 { // TODO: Maybe (<), not (<=)
+        if glm::dot(&direction, &support_vector) < 0.0 {
             return false;
         }
 
         points.push_front(support_vector);
 
         if next_simplex(&mut points, &mut direction) {
+            println!("epa {:?}", epa(points.clone(), collider_a, collider_b));
             return true;
         }
     }
+}
+
+static TOLERANCE: f32 = 0.00001;
+
+fn epa(
+    mut termination_simplex: Simplex,
+    collider_a: &Collider,
+    collider_b: &Collider,
+) -> (glm::Vec3, f32) {
+    loop {
+        let edge = find_closest_edge(&termination_simplex);
+
+        let p = support(collider_a, collider_b, edge.normal);
+
+        let d = p.dot(&edge.normal);
+
+        if d - edge.distance < TOLERANCE {
+            return (edge.normal, d);
+        } else {
+            termination_simplex.set(edge.index, p);
+        }
+    }
+}
+
+fn find_closest_edge(simplex: &Simplex) -> Edge {
+    let distance = f32::MAX;
+
+    let mut closest = Edge {
+        distance: 0.0,
+        normal: Default::default(),
+        index: 0,
+    };
+
+    for i in 0..simplex.size() as usize {
+        let j = if i + 1 == simplex.size() as usize {
+            0
+        } else {
+            i + 1
+        };
+
+        let a = simplex.get(i);
+        let b = simplex.get(j);
+
+        let e = glm::vec3(b.x - a.x, b.y - a.y, b.z - a.z);
+
+        let oa = a;
+
+        let n = &vector_triple_product(&e, oa, &e).normalize() as &glm::Vec3;
+
+        let d = n.dot(a);
+
+        if d < distance {
+            closest.distance = d;
+            closest.normal = *n;
+            closest.index = j;
+        }
+    }
+
+    closest
+}
+
+struct Edge {
+    distance: f32,
+    normal: glm::Vec3,
+    index: usize,
 }

@@ -9,7 +9,8 @@ use vulkanalia::vk::ExtDebugUtilsExtension;
 use vulkanalia::window as vk_window;
 use winit::window::Window;
 
-use crate::{AppData, VALIDATION_ENABLED, VALIDATION_LAYER};
+use crate::{VALIDATION_ENABLED, VALIDATION_LAYER};
+use crate::core::app_data::AppData;
 
 pub(crate) unsafe fn create_instance(
     window: &Window,

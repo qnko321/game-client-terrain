@@ -2,11 +2,10 @@ use anyhow::{anyhow, Result};
 
 use crate::graphics::physical_device::SuitabilityError;
 
-use crate::AppData;
-
 use vulkanalia::prelude::v1_0::*;
 
 use vulkanalia::vk::KhrSurfaceExtension;
+use crate::core::app_data::AppData;
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct QueueFamilyIndices {

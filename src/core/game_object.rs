@@ -1,6 +1,7 @@
-use std::any::Any;
 use crate::core::collider::Collider;
-use crate::FrameData;
+use crate::{FrameData};
+use std::any::Any;
+use vulkanalia::{Device, Instance};
 use crate::terrain::mesh_data::MeshData;
 
 pub(crate) trait GameObject {
